@@ -216,11 +216,11 @@ function paintTerrainTexture() {
       } else if (h < 5.5) {     // beach sand with damp patches
         const damp = nMid * 26;
         r = 226 - damp; g = 199 - damp; b = 138 - damp * 0.7;
-      } else if (h < 52) {      // grass: sunlit meadow mottled with dry patches
+      } else if (h < 52) {      // grass: deep meadow green mottled with dry patches
         const dry = Math.max(0, nBig - 0.55) * 1.6;
-        r = mix(96, 168, dry) + (nMid - 0.5) * 34 + (nMicro - 0.5) * 15;
-        g = mix(148, 158, dry) + (nMid - 0.5) * 30 + (nMicro - 0.5) * 13;
-        b = mix(66, 84, dry) + (nFine - 0.5) * 16;
+        r = mix(74, 158, dry) + (nMid - 0.5) * 32 + (nMicro - 0.5) * 15;
+        g = mix(122, 146, dry) + (nMid - 0.5) * 28 + (nMicro - 0.5) * 13;
+        b = mix(52, 76, dry) + (nFine - 0.5) * 15;
         const forest = Math.max(0, (h - 20) / 32) * Math.max(0, nBig - 0.34) * 1.8; // dark woodland blotches
         r = mix(r, 52, Math.min(0.8, forest)); g = mix(g, 102, Math.min(0.8, forest)); b = mix(b, 50, Math.min(0.8, forest));
       } else if (h < 108) {     // high forest thinning into warm rock
@@ -278,6 +278,21 @@ function buildTerrain() {
   geo.computeVertexNormals();
   const skin = paintTerrainTexture();
   const mat = new THREE.MeshStandardMaterial({ map: skin, bumpMap: skin, bumpScale: 0.9, roughness: 0.97, metalness: 0, envMapIntensity: 0.22 });
+  // a second, finely tiled detail layer multiplied over the painting — this
+  // is what keeps the ground crisp at low altitude instead of washing out
+  const detailTex = makeNoiseTexture(256, 158, 84, 200);
+  detailTex.repeat.set(1, 1);
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.detailTex = { value: detailTex };
+    shader.vertexShader = 'varying vec2 vDetailUv;\n' + shader.vertexShader.replace(
+      '#include <uv_vertex>',
+      '#include <uv_vertex>\n  vDetailUv = uv;'
+    );
+    shader.fragmentShader = 'uniform sampler2D detailTex;\nvarying vec2 vDetailUv;\n' + shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      '#include <map_fragment>\n  diffuseColor.rgb *= texture2D(detailTex, vDetailUv * 260.0).rgb * 1.62;'
+    );
+  };
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   return mesh;
@@ -384,14 +399,14 @@ function buildAirfield() {
 buildAirfield();
 
 /* ---------- the city: instanced towers with lit windows, a terminal, parked jets ---------- */
-function facadeTextures() {
+function facadeTextures(seedBase, base) {
   const c = document.createElement('canvas'); c.width = c.height = 256;
   const x = c.getContext('2d');
-  x.fillStyle = '#9aa0a4'; x.fillRect(0, 0, 256, 256);
+  x.fillStyle = base; x.fillRect(0, 0, 256, 256);
   const e = document.createElement('canvas'); e.width = e.height = 256;
   const ex = e.getContext('2d');
   ex.fillStyle = '#000000'; ex.fillRect(0, 0, 256, 256);
-  let seed = 5150;
+  let seed = seedBase;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
   // concrete panel seams and grime streaks under each window row
   x.strokeStyle = 'rgba(70,74,78,0.35)'; x.lineWidth = 1;
@@ -410,36 +425,58 @@ function facadeTextures() {
   return { map, emissive };
 }
 function buildCity() {
-  const { map, emissive } = facadeTextures();
-  const mat = new THREE.MeshStandardMaterial({ map, emissiveMap: emissive, emissive: 0xffca7a, emissiveIntensity: 0.85, roughness: 0.7, metalness: 0.15 });
+  // three facade families so the blocks do not repeat one wallpaper
+  const variants = [facadeTextures(5150, '#9aa0a4'), facadeTextures(881, '#a89a88'), facadeTextures(2024, '#8d9aa6')];
   const geo = new THREE.BoxGeometry(1, 1, 1);
   geo.translate(0, 0.5, 0);
   const COUNT = 720;
-  const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
-  const sc = new THREE.Vector3(), pv = new THREE.Vector3();
   const palette = [new THREE.Color(0xb8bcc0), new THREE.Color(0x9fb4c4), new THREE.Color(0xd8c9ae), new THREE.Color(0x8b98a8), new THREE.Color(0xc4b49a)];
   let seed = 24680;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  let n = 0, guard = 0;
-  while (n < COUNT && guard++ < 9000) {
+  const placed = [];
+  let guard = 0;
+  while (placed.length < COUNT && guard++ < 9000) {
     const x = 150 + (rnd() * 2 - 1) * 1420, z = -100 + (rnd() * 2 - 1) * 1160;
     if (cityMask(x, z) < 0.5) continue;
     if (Math.abs(x - RWY.x) < 85 && z > RWY.zTop - 170 && z < RWY.zBot + 130) continue;   // runway corridor
     if (x > 30 && x < 260 && z > -430 && z < 300) continue;                               // airport grounds
     const downtown = Math.max(0, 1 - Math.hypot(x - 520, z + 200) / 460);
-    const w = 17 + rnd() * 26, d = 17 + rnd() * 26;
-    const hgt = 13 + rnd() * 22 + downtown * downtown * (55 + rnd() * 85);
-    eu.set(0, (rnd() - 0.5) * 0.14, 0); q.setFromEuler(eu);
-    sc.set(w, hgt, d); pv.set(x, heightAt(x, z) - 0.4, z);
-    m4.compose(pv, q, sc);
-    mesh.setMatrixAt(n, m4);
-    mesh.setColorAt(n, palette[Math.floor(rnd() * palette.length)]);
-    n++;
+    placed.push({
+      x, z, w: 17 + rnd() * 26, d: 17 + rnd() * 26,
+      h: 13 + rnd() * 22 + downtown * downtown * (55 + rnd() * 85),
+      rot: (rnd() - 0.5) * 0.14, v: Math.floor(rnd() * 3),
+      col: palette[Math.floor(rnd() * palette.length)], gy: heightAt(x, z) - 0.4,
+    });
   }
-  mesh.count = n;
-  mesh.castShadow = false; mesh.receiveShadow = false;
-  scene.add(mesh);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
+  const sc = new THREE.Vector3(), pv = new THREE.Vector3();
+  for (let v = 0; v < 3; v++) {
+    const mine = placed.filter((p) => p.v === v);
+    if (!mine.length) continue;
+    const mat = new THREE.MeshStandardMaterial({ map: variants[v].map, emissiveMap: variants[v].emissive, emissive: 0xffca7a, emissiveIntensity: 0.85, roughness: 0.7, metalness: 0.15 });
+    const mesh = new THREE.InstancedMesh(geo, mat, mine.length);
+    mine.forEach((p, i) => {
+      eu.set(0, p.rot, 0); q.setFromEuler(eu);
+      sc.set(p.w, p.h, p.d); pv.set(p.x, p.gy, p.z);
+      m4.compose(pv, q, sc);
+      mesh.setMatrixAt(i, m4);
+      mesh.setColorAt(i, p.col);
+    });
+    scene.add(mesh);
+  }
+  // roof caps: every block gets its own roof tone, like the reference rooftops
+  const roofGeo = new THREE.BoxGeometry(1, 1, 1);
+  const roofMat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.02 });
+  const roofs = new THREE.InstancedMesh(roofGeo, roofMat, placed.length);
+  const roofPalette = [new THREE.Color(0x6e6a63), new THREE.Color(0x8a5f43), new THREE.Color(0x4e565e), new THREE.Color(0x97928a), new THREE.Color(0x71584a)];
+  placed.forEach((p, i) => {
+    eu.set(0, p.rot, 0); q.setFromEuler(eu);
+    sc.set(p.w + 0.7, 1.1, p.d + 0.7); pv.set(p.x, p.gy + p.h, p.z);
+    m4.compose(pv, q, sc);
+    roofs.setMatrixAt(i, m4);
+    roofs.setColorAt(i, roofPalette[Math.floor(rnd() * roofPalette.length)]);
+  });
+  scene.add(roofs);
 }
 buildCity();
 /* terminal block east of the apron + two parked jets waiting at gates */
@@ -539,23 +576,50 @@ function makeBlobGeo() {
   geo.computeVertexNormals();
   return geo;
 }
+/* leaf-speckle texture so canopies read as foliage, not plastic balls */
+function makeLeafTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#8a9a86'; x.fillRect(0, 0, 128, 128);
+  let seed = 777;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 2600; i++) {
+    const v = 96 + Math.round(rnd() * 110);
+    x.fillStyle = 'rgb(' + Math.round(v * 0.72) + ',' + v + ',' + Math.round(v * 0.66) + ')';
+    x.fillRect(rnd() * 128, rnd() * 128, 2.4, 2.4);
+  }
+  for (let i = 0; i < 260; i++) {  // shadow pockets inside the canopy
+    x.fillStyle = 'rgba(28,44,26,0.35)';
+    x.fillRect(rnd() * 128, rnd() * 128, 3.4, 3.4);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
 function buildTrees() {
-  const trunkG = new THREE.CylinderGeometry(0.7, 1, 4, 5);
+  const trunkG = new THREE.CylinderGeometry(0.55, 0.8, 3.4, 5);
   const leafG = makeBlobGeo();
   const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2e, flatShading: true });
-  const leafM = new THREE.MeshLambertMaterial({ color: 0x2f6e3c, flatShading: true });
-  const trunks = new THREE.InstancedMesh(trunkG, trunkM, 420);
-  const leaves = new THREE.InstancedMesh(leafG, leafM, 420);
+  const leafM = new THREE.MeshLambertMaterial({ map: makeLeafTexture(), flatShading: true });
+  const MAX = 1500;
+  const trunks = new THREE.InstancedMesh(trunkG, trunkM, MAX);
+  const leaves = new THREE.InstancedMesh(leafG, leafM, MAX);
+  const tints = [new THREE.Color(0x9fb98a), new THREE.Color(0xffffff), new THREE.Color(0x7fae72), new THREE.Color(0xc2cf9a)];
   const m4 = new THREE.Matrix4(); let n = 0;
   let seed = 1234567;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 4000 && n < 420; i++) {
-    const x = (rnd() * 2 - 1) * 1500, z = (rnd() * 2 - 1) * 1500;
+  for (let i = 0; i < 16000 && n < MAX; i++) {
+    const x = (rnd() * 2 - 1) * 1650, z = (rnd() * 2 - 1) * 1650;
     const h = heightAt(x, z);
-    if (h < 8 || h > 95 || onRunway(x, z) || cityMask(x, z) > 0.35 || Math.abs(x) < 70 && z > -480 && z < 320) continue;
-    const s = 0.8 + rnd() * 0.9;
-    m4.makeScale(s, s, s).setPosition(x, h + 2 * s, z); trunks.setMatrixAt(n, m4);
-    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 7.6 * s, z); leaves.setMatrixAt(n, m4);
+    if (h < 6 || h > 100 || onRunway(x, z)) continue;
+    if (Math.abs(x) < 70 && z > -480 && z < 320) continue;
+    if (x > 20 && x < 290 && z > -450 && z < 320) continue;         // airport grounds
+    const cm = cityMask(x, z);
+    if (cm > 0.3 && fbm(x * 0.0016, z * 0.0016) <= 0.64) continue;  // inside the city, trees live in the park pockets
+    const s = 0.42 + rnd() * 0.5;
+    m4.makeScale(s, s, s).setPosition(x, h + 1.7 * s, z); trunks.setMatrixAt(n, m4);
+    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 5.4 * s, z); leaves.setMatrixAt(n, m4);
+    leaves.setColorAt(n, tints[Math.floor(rnd() * tints.length)]);
     n++;
   }
   trunks.count = leaves.count = n;
