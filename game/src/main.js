@@ -56,9 +56,32 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ec9d8);
-scene.fog = new THREE.Fog(0xa8d2dc, 1800, 6200);
+scene.fog = new THREE.Fog(0xb9d9de, 1600, 6800);
+/* gradient sky dome with a warm glow around the sun's side of the sky */
+function buildSky() {
+  const geo = new THREE.SphereGeometry(9000, 24, 14);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  const top = new THREE.Color(0x3f8fc4), mid = new THREE.Color(0x9fd3e0);
+  const low = new THREE.Color(0xe9e4c8), tmp = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i) / 9000;
+    if (y > 0.12) tmp.copy(mid).lerp(top, Math.min(1, (y - 0.12) / 0.7));
+    else tmp.copy(low).lerp(mid, Math.max(0, (y + 0.08) / 0.2));
+    colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const sky = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+  sky.renderOrder = -10;
+  return sky;
+}
+scene.add(buildSky());
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.5, 12000);
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -66,9 +89,16 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 scene.add(new THREE.HemisphereLight(0xcfeeff, 0x3d6b46, 0.95));
-const sun = new THREE.DirectionalLight(0xfff2d8, 1.15);
+const sun = new THREE.DirectionalLight(0xfff2d8, 1.2);
 sun.position.set(-900, 1400, -600);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -260; sun.shadow.camera.right = 260;
+sun.shadow.camera.top = 260; sun.shadow.camera.bottom = -260;
+sun.shadow.camera.near = 100; sun.shadow.camera.far = 3200;
+sun.shadow.bias = -0.0006;
 scene.add(sun);
+scene.add(sun.target);
 
 /* ---------- terrain mesh, coloured by height ---------- */
 function buildTerrain() {
@@ -95,15 +125,17 @@ function buildTerrain() {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-  return new THREE.Mesh(geo, mat);
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  return mesh;
 }
 scene.add(buildTerrain());
 
 /* sea surface (translucent, animated in the loop) */
 const sea = new THREE.Mesh(
   new THREE.PlaneGeometry(WORLD * 2.4, WORLD * 2.4),
-  new THREE.MeshLambertMaterial({ color: 0x2e86ab, transparent: true, opacity: 0.86 })
+  new THREE.MeshPhongMaterial({ color: 0x2e86ab, specular: 0xbfe8ef, shininess: 110, transparent: true, opacity: 0.9 })
 );
 sea.rotation.x = -Math.PI / 2; sea.position.y = 0.4;
 scene.add(sea);
@@ -183,19 +215,27 @@ buildTrees();
 /* soft cartoon clouds */
 const clouds = [];
 function buildClouds() {
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.94 });
+  // soft billboard puffs: a radial-gradient sprite reads as a painted cloud
+  const cc = document.createElement('canvas'); cc.width = 256; cc.height = 160;
+  const cx2 = cc.getContext('2d');
+  for (const [px, py, r] of [[128, 84, 62], [76, 92, 40], [182, 92, 44], [108, 66, 38], [152, 68, 34]]) {
+    const gr = cx2.createRadialGradient(px, py, 4, px, py, r);
+    gr.addColorStop(0, 'rgba(255,255,255,0.85)');
+    gr.addColorStop(0.65, 'rgba(255,255,255,0.42)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    cx2.fillStyle = gr;
+    cx2.fillRect(0, 0, 256, 160);
+  }
+  const tex = new THREE.CanvasTexture(cc);
   let seed = 987654;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 26; i++) {
-    const g = new THREE.Group();
-    const puffs = 3 + Math.floor(rnd() * 3);
-    for (let p = 0; p < puffs; p++) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(16 + rnd() * 20, 7, 6), mat);
-      s.position.set(p * 22 - puffs * 10, rnd() * 6, rnd() * 14 - 7);
-      s.scale.y = 0.45; g.add(s);
-    }
-    g.position.set((rnd() * 2 - 1) * 2600, 300 + rnd() * 170, (rnd() * 2 - 1) * 2600);
-    scene.add(g); clouds.push(g);
+  for (let i = 0; i < 30; i++) {
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.75 + rnd() * 0.2, depthWrite: false, fog: false });
+    const sp = new THREE.Sprite(mat);
+    const w = 190 + rnd() * 260;
+    sp.scale.set(w, w * 0.5, 1);
+    sp.position.set((rnd() * 2 - 1) * 2800, 320 + rnd() * 200, (rnd() * 2 - 1) * 2800);
+    scene.add(sp); clouds.push(sp);
   }
 }
 buildClouds();
@@ -203,16 +243,32 @@ buildClouds();
 /* ---------- the Kestrel 07: low-poly prop plane, orange & cream ---------- */
 function buildPlane() {
   const g = new THREE.Group();
-  const cream = new THREE.MeshLambertMaterial({ color: 0xf3e3c2, flatShading: true });
-  const orange = new THREE.MeshLambertMaterial({ color: 0xe86f2e, flatShading: true });
+  const cream = new THREE.MeshPhongMaterial({ color: 0xf3e3c2, shininess: 26, specular: 0x555044 });
+  const orange = new THREE.MeshPhongMaterial({ color: 0xe86f2e, shininess: 30, specular: 0x664422 });
   const dark = new THREE.MeshLambertMaterial({ color: 0x2b3438, flatShading: true });
-  const glass = new THREE.MeshLambertMaterial({ color: 0x1d4e63, flatShading: true });
-  const fus = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 0.55, 8.6, 8), cream);
+  const glass = new THREE.MeshPhongMaterial({ color: 0x1d4e63, shininess: 120, specular: 0xcfe8ff });
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 0.55, 8.6, 18), cream);
   fus.rotation.x = Math.PI / 2; g.add(fus);
-  const nose = new THREE.Mesh(new THREE.CylinderGeometry(1.12, 1.05, 1.6, 8), orange);
+  const nose = new THREE.Mesh(new THREE.CylinderGeometry(1.12, 1.05, 1.6, 18), orange);
   nose.rotation.x = Math.PI / 2; nose.position.z = -4.9; g.add(nose);
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(1.02, 8, 6), glass);
+  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(1.02, 16, 12), glass);
   cockpit.scale.set(0.82, 0.72, 1.7); cockpit.position.set(0, 0.78, -0.7); g.add(cockpit);
+  // painted name decals on both flanks, drawn on a canvas (no image files)
+  const decalC = document.createElement('canvas'); decalC.width = 512; decalC.height = 96;
+  const dc = decalC.getContext('2d');
+  dc.fillStyle = '#2b3438'; dc.font = 'bold 58px Segoe UI, Arial'; dc.textAlign = 'center';
+  dc.fillText('K E S T R E L', 256, 62);
+  const decalTex = new THREE.CanvasTexture(decalC);
+  for (const sx of [-1, 1]) {
+    const decal = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.86),
+      new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, side: THREE.DoubleSide }));
+    decal.position.set(sx * 1.06, 0.18, 0.7);
+    decal.rotation.y = sx * Math.PI / 2;
+    g.add(decal);
+    const nav = new THREE.Mesh(new THREE.SphereGeometry(0.22, 6, 5),
+      new THREE.MeshBasicMaterial({ color: sx < 0 ? 0xff4444 : 0x44ff77 }));
+    nav.position.set(sx * 6.9, 0.15, -1.1); g.add(nav);
+  }
   const wing = new THREE.Mesh(new THREE.BoxGeometry(13.6, 0.28, 2.1), orange);
   wing.position.set(0, -0.25, -1.1); g.add(wing);
   const wingTipL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, 1.9), dark);
@@ -228,6 +284,11 @@ function buildPlane() {
   const blade2 = blade.clone(); blade2.rotation.z = Math.PI / 2; prop.add(blade2);
   const hub = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), dark);
   prop.add(hub); prop.position.z = -5.85; g.add(prop);
+  const blurDisc = new THREE.Mesh(new THREE.CircleGeometry(2.35, 24),
+    new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  blurDisc.position.z = -5.8; g.add(blurDisc);
+  g.userData.blurDisc = blurDisc;
+  g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
   const gearMat = dark;
   const legs = new THREE.Group();
   for (const sx of [-1, 1]) {
@@ -882,6 +943,12 @@ function animate() {
     stepCamera(dt);
   }
   stepBursts(dt);
+  // keep the sun (and its shadows) centred on the action, spin blur with throttle
+  sun.position.set(S.pos.x - 700, 1150, S.pos.z - 460);
+  sun.target.position.copy(S.pos);
+  plane.group.userData.blurDisc.material.opacity = S.throttle * 0.17;
+  const targetFov = 58 + Math.min(8, Math.max(0, (S.speed - 30) * 0.16)) + (S.onGround && S.throttle > 0.8 ? Math.sin(t * 47) * 0.4 : 0);
+  if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov += (targetFov - camera.fov) * 0.08; camera.updateProjectionMatrix(); }
   if (msgTimer > 0 && msgTimer < 900) { msgTimer -= dt; if (msgTimer <= 0) document.getElementById('msg').textContent = ''; }
   AudioSys.update(S.throttle, S.speed * KT, S.mode === 'play');
   updateHUD();
