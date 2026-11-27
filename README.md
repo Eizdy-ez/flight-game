@@ -1,11 +1,12 @@
-# GULLWING RIDGE — Kestrel 07
+# SKYHARBOR — Kestrel 07
 
-A low-poly flight sortie game for the make.fun "Make the best flight game" bounty.
+A flight sortie game for the make.fun "Make the best flight game" bounty.
 
-Take off from the island runway (RWY 18) in the Kestrel 07, thread six glowing
-bay gates in order around Bellwater Sector, then bring her home and land back
-on the same strip. Your touchdown is graded: sink rate, touchdown speed and
-centreline decide the landing bonus on the debrief card.
+Take off from the city airport runway (RWY 18) in the Kestrel 07, thread six
+glowing gates in order around the harbour city — over its rooftops, the
+downtown towers and the bays — then bring her home and land back on the same
+strip. Your touchdown is graded: sink rate, touchdown speed and centreline
+decide the landing bonus on the debrief card.
 
 ## Play
 
@@ -26,7 +27,7 @@ http://localhost:8080). No network requests; everything is vendored locally.
 - Terrain collision, ditching, hard-landing airframe damage
 - Gate capture only in order, scored with a centre bonus per ring
 - Landing grades from *Butter* to *Teeth-Rattler*, with a full debrief card
-- Synthesised engine, wind, gate chimes and a soft island music loop (WebAudio, no files)
+- Synthesised engine, wind, gate chimes and a soft golden-hour music loop (WebAudio, no files)
 
 ## Layout
 
