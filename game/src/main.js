@@ -21,12 +21,12 @@ function gauss(x, z, cx, cz, r, h) {
 const ISLANDS = [
   { x: 0, z: -260, r: 720, h: 66, t: 'lush' },      // airport island
   { x: 60, z: 330, r: 640, h: 56, t: 'lush' },
-  { x: -1250, z: -650, r: 560, h: 305, t: 'volc' }, // west chain
-  { x: -1450, z: 250, r: 520, h: 268, t: 'lush' },
-  { x: -1050, z: 950, r: 430, h: 214, t: 'lush' },
-  { x: 1300, z: -700, r: 580, h: 318, t: 'lush' },  // east chain
-  { x: 1480, z: 300, r: 500, h: 252, t: 'dry' },
-  { x: 1100, z: 980, r: 420, h: 205, t: 'dry' },
+  { x: -1470, z: -650, r: 560, h: 305, t: 'volc' }, // west chain
+  { x: -1670, z: 250, r: 520, h: 268, t: 'lush' },
+  { x: -1270, z: 950, r: 430, h: 214, t: 'lush' },
+  { x: 1520, z: -700, r: 580, h: 318, t: 'lush' },  // east chain
+  { x: 1700, z: 300, r: 500, h: 252, t: 'dry' },
+  { x: 1320, z: 980, r: 420, h: 205, t: 'dry' },
   { x: -150, z: -1700, r: 800, h: 345, t: 'lush' }, // north backdrop peak
   { x: 350, z: 1400, r: 300, h: 62, t: 'dry' },     // south islets
   { x: -700, z: 1300, r: 260, h: 48, t: 'lush' },
@@ -141,7 +141,55 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (postRT) postRT.setSize(window.innerWidth, window.innerHeight);
 });
+
+/* ---------- realistic grade pass ----------
+   The scene renders to a target, then a fullscreen shader applies a filmic
+   grade: S-curve contrast, a saturation lift, warm-highlight / cool-shadow
+   split toning, a soft vignette and animated grain. This is what makes the
+   flat-shaded world read as a photographed place instead of a diagram. */
+let postRT = null, postScene = null, postCam = null, postMat = null;
+function initPost() {
+  postRT = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+  postScene = new THREE.Scene();
+  postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  postMat = new THREE.ShaderMaterial({
+    uniforms: { tD: { value: postRT.texture }, uT: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: [
+      'uniform sampler2D tD; uniform float uT; varying vec2 vUv;',
+      'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+      'void main(){',
+      '  vec3 c = texture2D(tD, vUv).rgb;',
+      '  c = c * c * (3.0 - 2.0 * c) * 0.22 + c * 0.78;',                    // S-curve contrast
+      '  float l = dot(c, vec3(0.299, 0.587, 0.114));',
+      '  c = mix(vec3(l), c, 1.14);',                                       // saturation lift
+      '  c += vec3(0.045, 0.018, -0.020) * l + vec3(-0.012, 0.004, 0.030) * (1.0 - l);', // split tone
+      '  float d = distance(vUv, vec2(0.5));',
+      '  c *= smoothstep(0.95, 0.42, d) * 0.24 + 0.76;',                    // vignette
+      '  c += (hash(vUv * (913.0 + fract(uT) * 7.0)) - 0.5) * 0.028;',      // film grain
+      '  gl_FragColor = vec4(c, 1.0);',
+      '  #include <tonemapping_fragment>',
+      '  #include <encodings_fragment>',
+      '}',
+    ].join('\n'),
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat);
+  quad.frustumCulled = false;
+  postScene.add(quad);
+}
+initPost();
+function renderFrame(t) {
+  renderer.toneMapping = THREE.NoToneMapping;   // grade pass owns tone mapping
+  renderer.setRenderTarget(postRT);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  postMat.uniforms.uT.value = t;
+  renderer.render(postScene, postCam);
+}
 scene.add(new THREE.HemisphereLight(0xffdfb0, 0x4a6741, 0.85));
 const sun = new THREE.DirectionalLight(0xffc98a, 1.3);
 sun.position.set(-900, 1400, -600);
@@ -304,7 +352,7 @@ function buildTerrain() {
   for (let i = 0; i < pos.count; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
   const skin = paintTerrainTexture();
-  const mat = new THREE.MeshStandardMaterial({ map: skin, bumpMap: skin, bumpScale: 0.9, roughness: 0.97, metalness: 0, envMapIntensity: 0.22 });
+  const mat = new THREE.MeshStandardMaterial({ map: skin, bumpMap: skin, bumpScale: 0.9, roughness: 0.94, metalness: 0, envMapIntensity: 0.34 });
   // a second, finely tiled detail layer multiplied over the painting — this
   // is what keeps the ground crisp at low altitude instead of washing out
   const detailTex = makeNoiseTexture(256, 158, 84, 200);
@@ -351,7 +399,7 @@ function makeWaterNormal() {
 const seaNormal = makeWaterNormal();
 const sea = new THREE.Mesh(
   new THREE.PlaneGeometry(WORLD * 2.4, WORLD * 2.4),
-  new THREE.MeshStandardMaterial({ color: 0x1d6a8c, roughness: 0.13, metalness: 0.05, normalMap: seaNormal, normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 1.35, transparent: true, opacity: 0.96 })
+  new THREE.MeshStandardMaterial({ color: 0x1a6484, roughness: 0.07, metalness: 0.05, normalMap: seaNormal, normalScale: new THREE.Vector2(0.7, 0.7), envMapIntensity: 1.6, transparent: true, opacity: 0.97 })
 );
 sea.rotation.x = -Math.PI / 2; sea.position.y = 0.4;
 scene.add(sea);
@@ -893,10 +941,10 @@ scene.add(plane.group);
 /* ---------- gates: six glowing rings flown in order ---------- */
 const GATE_DEFS = [
   { x: 420,   y: 110, z: 560,   ry: 2.9 },   // SE shore of the airport island
-  { x: 1150,  y: 185, z: -320,  ry: 1.9 },   // east mountain pass
+  { x: 1330,  y: 205, z: -320,  ry: 1.9 },   // east mountain pass
   { x: 640,   y: 210, z: -1180, ry: 1.2 },   // NE high saddle
   { x: -520,  y: 215, z: -1250, ry: 0.4 },   // below the north backdrop peak
-  { x: -1230, y: 190, z: -320,  ry: -0.5 },  // west volcanic flank
+  { x: -1350, y: 235, z: -320,  ry: -0.5 },  // west volcanic flank
   { x: -820,  y: 120, z: 720,   ry: -1.2 },  // SW islet hop, then home
 ];
 const GATE_R = 34;
@@ -1512,8 +1560,6 @@ document.getElementById('nextBtn').addEventListener('click', () => { AudioSys.in
 document.getElementById('briefBtn').addEventListener('click', () => showBriefing());
 document.getElementById('engineBtn').addEventListener('click', () => { AudioSys.init(); if (S.mode === 'play') toggleEngine(); });
 document.getElementById('pauseBtn').addEventListener('click', () => { if (S.mode === 'play') togglePause(); });
-document.getElementById('camBtn').addEventListener('click', () => { if (S.mode === 'play') cycleCam(); });
-document.getElementById('rstBtn').addEventListener('click', () => restart());
 document.getElementById('towerBtn').addEventListener('click', () => {
   AudioSys.init();
   setMsg(S.gateIdx >= gates.length ? 'Tower: cleared to land RWY 18, wind calm.' : 'Tower: Kestrel 07, circuit active — next gate is lit orange.', 3);
@@ -1616,7 +1662,7 @@ function animate() {
   if (msgTimer > 0 && msgTimer < 900) { msgTimer -= dt; if (msgTimer <= 0) document.getElementById('msg').textContent = ''; }
   AudioSys.update(S.throttle, S.speed * KT, S.mode === 'play');
   updateHUD();
-  renderer.render(scene, camera);
+  renderFrame(t);
 }
 parkOnRunway();
 paintGates(0, 0);
