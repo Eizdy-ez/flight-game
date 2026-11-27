@@ -975,6 +975,38 @@ function buildPlane() {
     g.add(glow);
   }
   g.userData.glowMat = glowMat;
+  // afterburner flames: nested gradient cones per engine, driven by throttle
+  // in the main loop (lit above ~0.62 throttle, full length at military power)
+  const flameC = document.createElement('canvas'); flameC.width = 16; flameC.height = 128;
+  const fx = flameC.getContext('2d');
+  const fg = fx.createLinearGradient(0, 0, 0, 128);
+  fg.addColorStop(0, 'rgba(255,80,20,0)');        // canvas top = cone tip (v=1)
+  fg.addColorStop(0.45, 'rgba(255,110,30,0.45)');
+  fg.addColorStop(0.78, 'rgba(255,180,80,0.9)');
+  fg.addColorStop(1, 'rgba(255,244,205,1)');      // canvas bottom = cone base at the nozzle
+  fx.fillStyle = fg; fx.fillRect(0, 0, 16, 128);
+  const flameTex = new THREE.CanvasTexture(flameC);
+  const burners = [];
+  for (const sx of [-1, 1]) {
+    const grp = new THREE.Group();
+    grp.position.set(sx * 1.08, -0.28, 6.42);
+    const outerMat = new THREE.MeshBasicMaterial({ map: flameTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+    const outerGeo = new THREE.ConeGeometry(0.36, 5.2, 14, 1, true);
+    outerGeo.rotateX(Math.PI / 2);   // apex toward +z (rear)
+    const outer = new THREE.Mesh(outerGeo, outerMat);
+    outer.position.z = 2.6;
+    grp.add(outer);
+    const innerMat = new THREE.MeshBasicMaterial({ map: flameTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+    const innerGeo = new THREE.ConeGeometry(0.2, 3.0, 12, 1, true);
+    innerGeo.rotateX(Math.PI / 2);
+    const inner = new THREE.Mesh(innerGeo, innerMat);
+    inner.position.z = 1.5;
+    grp.add(inner);
+    grp.visible = false;
+    g.add(grp);
+    burners.push({ grp, outerMat, innerMat });
+  }
+  g.userData.burners = burners;
   // painted name decals on both flanks, drawn on a canvas (no image files)
   const decalC = document.createElement('canvas'); decalC.width = 512; decalC.height = 96;
   const dc = decalC.getContext('2d');
@@ -1770,16 +1802,20 @@ function applyShotMode() {
   const shot = q.get('shot');
   if (!shot) return;
   if (shot === 'play' || shot === 'cover') {
+    // hero composition: gate 1's ring dead centre, airport island framed
+    // through it, burners lit — the plane runs in from the south-east shore
     resetSortie(false);
-    S.gateIdx = 4; S.score = 1200;
-    paintGates(4, 4);
-    S.pos.set(-352, 152, -882);
-    aimAt(gates[4].def.x, gates[4].def.z);
-    S.speed = 55; S.throttle = 0.66; S.fuel = 69;
+    S.gateIdx = 0; S.score = 0;
+    paintGates(0, 0);
+    S.pos.set(549, 104, 755);
+    aimAt(gates[0].def.x, gates[0].def.z);
+    const g0 = gates[0];   // stage the ring face-on to the camera for the still
+    g0.grp.rotation.y = Math.atan2(S.pos.x - g0.def.x, S.pos.z - g0.def.z);
+    S.speed = 58; S.throttle = 0.97; S.fuel = 97;
     S.onGround = false; S.airborne = true; S.gearDown = false;
     plane.legs.visible = false;
-    S.roll = -0.38;                       // banked onto the gate, not flying flat
-    S.time = 96;
+    S.roll = -0.22; S.pitch = 0.02;       // gentle bank, ring stays centred
+    S.time = 8;
     document.getElementById('briefing').style.display = 'none';
   } else if (shot === 'action') {
     resetSortie(false);
@@ -1787,7 +1823,7 @@ function applyShotMode() {
     paintGates(2, 2);
     S.pos.set(gates[2].def.x - 300, gates[2].def.y + 30, gates[2].def.z + 330);
     aimAt(gates[2].def.x, gates[2].def.z);
-    S.speed = 62; S.throttle = 0.82; S.fuel = 81;
+    S.speed = 62; S.throttle = 0.97; S.fuel = 81;
     S.onGround = false; S.airborne = true; S.gearDown = false;
     plane.legs.visible = false;
     S.roll = -0.85; S.pitch = 0.05;       // hard banked firing pass
@@ -1862,6 +1898,17 @@ function animate() {
   sun.target.position.copy(S.pos);
   if (plane.group.userData.glowMat) {
     plane.group.userData.glowMat.opacity = 0.16 + S.throttle * 0.62 + Math.sin(t * 31) * 0.03;
+  }
+  // afterburner: ramps in past 0.62 throttle, flickers, dies with the engine
+  const burn = Math.max(0, Math.min(1, (S.throttle - 0.62) / 0.38)) * (S.engineOn ? 1 : 0);
+  if (plane.group.userData.burners) {
+    const flick = 0.92 + Math.sin(t * 43) * 0.05 + Math.sin(t * 61 + 1.7) * 0.03;
+    for (const b of plane.group.userData.burners) {
+      b.grp.visible = burn > 0.02;
+      b.grp.scale.set(0.7 + burn * 0.5, 0.7 + burn * 0.5, Math.max(0.05, burn) * flick);
+      b.outerMat.opacity = burn * 0.85;
+      b.innerMat.opacity = burn * 0.95;
+    }
   }
   const targetFov = 58 + Math.min(8, Math.max(0, (S.speed - 30) * 0.16)) + (S.onGround && S.throttle > 0.8 ? Math.sin(t * 47) * 0.4 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov += (targetFov - camera.fov) * 0.08; camera.updateProjectionMatrix(); }
