@@ -77,8 +77,8 @@ function buildSky() {
   const geo = new THREE.SphereGeometry(9000, 24, 14);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const top = new THREE.Color(0x466e7d), mid = new THREE.Color(0xb3beb2);
-  const low = new THREE.Color(0xf6bf78), tmp = new THREE.Color();
+  const top = new THREE.Color(0x3d5c74), mid = new THREE.Color(0xc9a189);
+  const low = new THREE.Color(0xf7ab58), tmp = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i) / 9000;
     if (y > 0.12) tmp.copy(mid).lerp(top, Math.min(1, (y - 0.12) / 0.7));
@@ -177,7 +177,7 @@ function fbm(x, z) {
    waterline, strata bands on the high rock. This one painting is what the
    reference islands have and flat vertex colours can never give. */
 function paintTerrainTexture() {
-  const S = 1024, world = WORLD * 2;
+  const S = 2048, world = WORLD * 2;
   // heights sampled on a coarse grid (the landforms are smooth) and bilinearly
   // upsampled — per-pixel height calls would stall the load for no visual gain
   const G = 256, grid = new Float32Array((G + 1) * (G + 1));
@@ -208,6 +208,7 @@ function paintTerrainTexture() {
       const nBig = fbm(wx * 0.0016, wz * 0.0016);
       const nMid = fbm(wx * 0.013 + 40, wz * 0.013 + 9);
       const nFine = vnoise(wx * 0.11, wz * 0.11);
+      const nMicro = vnoise(wx * 0.34 + 90, wz * 0.34 + 31); // grain you only see up close
       let r, g, b;
       if (h < 1.2) {            // seabed: wet sand falling into blue-green depth
         const t = Math.max(0, (h + 24) / 25);
@@ -217,8 +218,8 @@ function paintTerrainTexture() {
         r = 226 - damp; g = 199 - damp; b = 138 - damp * 0.7;
       } else if (h < 52) {      // grass: sunlit meadow mottled with dry patches
         const dry = Math.max(0, nBig - 0.55) * 1.6;
-        r = mix(96, 168, dry) + (nMid - 0.5) * 34;
-        g = mix(148, 158, dry) + (nMid - 0.5) * 30;
+        r = mix(96, 168, dry) + (nMid - 0.5) * 34 + (nMicro - 0.5) * 15;
+        g = mix(148, 158, dry) + (nMid - 0.5) * 30 + (nMicro - 0.5) * 13;
         b = mix(66, 84, dry) + (nFine - 0.5) * 16;
         const forest = Math.max(0, (h - 20) / 32) * Math.max(0, nBig - 0.34) * 1.8; // dark woodland blotches
         r = mix(r, 52, Math.min(0.8, forest)); g = mix(g, 102, Math.min(0.8, forest)); b = mix(b, 50, Math.min(0.8, forest));
@@ -251,6 +252,9 @@ function paintTerrainTexture() {
         if (nBig > 0.66) { ur = mix(ur, 96, 0.55); ug = mix(ug, 138, 0.55); ub = mix(ub, 70, 0.55); } // park pockets stay green
         const rx = ((wx % 130) + 130) % 130, rz = ((wz % 130) + 130) % 130;
         if (rx < 8 || rz < 8) { ur = mix(ur, 58, 0.8); ug = mix(ug, 59, 0.8); ub = mix(ub, 63, 0.8); }  // asphalt streets
+        const ax = ((wx % 65) + 65) % 65, az = ((wz % 65) + 65) % 65;
+        if (ax < 2.6 || az < 2.6) { ur = mix(ur, 84, 0.5); ug = mix(ug, 84, 0.5); ub = mix(ub, 86, 0.5); } // alleys between plots
+        ur += (nMicro - 0.5) * 13; ug += (nMicro - 0.5) * 12; ub += (nMicro - 0.5) * 10;                    // pavement grain
         const t = Math.min(1, cm * 1.15) * 0.88;
         r = mix(r, ur, t); g = mix(g, ug, t); b = mix(b, ub, t);
       }
@@ -381,21 +385,27 @@ buildAirfield();
 
 /* ---------- the city: instanced towers with lit windows, a terminal, parked jets ---------- */
 function facadeTextures() {
-  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const c = document.createElement('canvas'); c.width = c.height = 256;
   const x = c.getContext('2d');
-  x.fillStyle = '#9aa0a4'; x.fillRect(0, 0, 128, 128);
-  const e = document.createElement('canvas'); e.width = e.height = 128;
+  x.fillStyle = '#9aa0a4'; x.fillRect(0, 0, 256, 256);
+  const e = document.createElement('canvas'); e.width = e.height = 256;
   const ex = e.getContext('2d');
-  ex.fillStyle = '#000000'; ex.fillRect(0, 0, 128, 128);
+  ex.fillStyle = '#000000'; ex.fillRect(0, 0, 256, 256);
   let seed = 5150;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let wy = 8; wy < 120; wy += 13) for (let wx = 8; wx < 120; wx += 11) {
+  // concrete panel seams and grime streaks under each window row
+  x.strokeStyle = 'rgba(70,74,78,0.35)'; x.lineWidth = 1;
+  for (let wy = 12; wy < 256; wy += 16) { x.beginPath(); x.moveTo(0, wy + 11); x.lineTo(256, wy + 11); x.stroke(); }
+  for (let wy = 10; wy < 250; wy += 16) for (let wx = 9; wx < 250; wx += 14) {
     const lit = rnd();
-    x.fillStyle = lit > 0.45 ? '#3d4c58' : '#6d7a84';
-    x.fillRect(wx, wy, 7, 8);
-    if (lit > 0.72) { ex.fillStyle = rnd() > 0.3 ? '#ffc978' : '#cfe4ff'; ex.fillRect(wx, wy, 7, 8); }
+    x.fillStyle = lit > 0.45 ? '#37434e' : '#68737d';
+    x.fillRect(wx, wy, 9, 10);
+    x.fillStyle = 'rgba(255,255,255,0.20)'; x.fillRect(wx, wy, 9, 3);   // sky glint on the glass
+    if (rnd() > 0.6) { x.fillStyle = 'rgba(60,58,52,0.18)'; x.fillRect(wx + 2, wy + 10, 5, 6); } // grime drip
+    if (lit > 0.70) { ex.fillStyle = rnd() > 0.3 ? '#ffc978' : '#cfe4ff'; ex.fillRect(wx, wy, 9, 10); }
   }
   const map = new THREE.CanvasTexture(c);
+  map.anisotropy = 4;
   const emissive = new THREE.CanvasTexture(e);
   return { map, emissive };
 }
@@ -464,6 +474,57 @@ function buildTerminal() {
   }
 }
 buildTerminal();
+
+/* ---------- fine detail layer: street lights, approach lights, taxiway, dome ---------- */
+function buildCityLights() {
+  const pts = [];
+  for (let gx = -1170; gx <= 1470; gx += 65) for (let gz = -1220; gz <= 1020; gz += 65) {
+    const x = gx + 150, z = gz - 100;
+    if (cityMask(x, z) < 0.55) continue;
+    const h = heightAt(x, z);
+    if (h < 4) continue;
+    if (Math.abs(x - RWY.x) < 80 && z > RWY.zTop - 160 && z < RWY.zBot + 120) continue;
+    if (x > 20 && x < 280 && z > -440 && z < 310) continue;
+    pts.push(x, h + 6.5, z);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xffb46b, size: 5.5, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false });
+  scene.add(new THREE.Points(geo, mat));
+}
+buildCityLights();
+function buildAirportDetail() {
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff0bc });
+  const lampGeo = new THREE.SphereGeometry(0.85, 6, 5);
+  const lamps = new THREE.InstancedMesh(lampGeo, lampMat, 44);
+  const m4 = new THREE.Matrix4();
+  let n = 0;
+  // approach light rows reaching out from both thresholds, like the reference final
+  for (let i = 1; i <= 11; i++) {
+    m4.makeTranslation(0, RWY.h + 1.6, RWY.zTop - i * 42); lamps.setMatrixAt(n++, m4);
+    m4.makeTranslation(0, RWY.h + 1.6, RWY.zBot + i * 42); lamps.setMatrixAt(n++, m4);
+  }
+  for (const sx of [-1, 1]) for (let i = 0; i < 11; i++) {   // runway centreline lights
+    m4.makeTranslation(sx * (RWY.w / 2 + 2), RWY.h + 1.2, RWY.zTop + 30 + i * 62); lamps.setMatrixAt(n++, m4);
+  }
+  lamps.count = n;
+  scene.add(lamps);
+  // taxiway from the strip to the terminal, with its yellow centreline
+  const taxi = new THREE.Mesh(new THREE.BoxGeometry(120, 0.5, 15), new THREE.MeshLambertMaterial({ color: 0x3a3f45 }));
+  taxi.position.set(84, RWY.h + 0.28, -60); taxi.receiveShadow = true; scene.add(taxi);
+  const line = new THREE.Mesh(new THREE.BoxGeometry(120, 0.56, 1.1), new THREE.MeshBasicMaterial({ color: 0xd9b93c }));
+  line.position.set(84, RWY.h + 0.3, -60); scene.add(line);
+  // concrete apron under the terminal and parked jets
+  const apron = new THREE.Mesh(new THREE.BoxGeometry(210, 0.5, 330), new THREE.MeshLambertMaterial({ color: 0x8f9296 }));
+  apron.position.set(128, RWY.h + 0.24, -60); apron.receiveShadow = true; scene.add(apron);
+  // the harbour dome: a glass hemisphere landmark east of the field
+  const domeBase = new THREE.Mesh(new THREE.CylinderGeometry(41, 43, 6, 24), new THREE.MeshStandardMaterial({ color: 0xb9bdc2, roughness: 0.6 }));
+  domeBase.position.set(430, heightAt(430, 330) + 3, 330); scene.add(domeBase);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(38, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x9fc8d8, roughness: 0.14, metalness: 0.35, envMapIntensity: 1.3 }));
+  dome.position.set(430, heightAt(430, 330) + 6, 330); dome.castShadow = true; scene.add(dome);
+}
+buildAirportDetail();
 
 /* trees on the green slopes: jittered-blob canopies, no two alike */
 function makeBlobGeo() {
@@ -538,6 +599,31 @@ function buildClouds() {
     sp.position.set((rnd() * 2 - 1) * 2800, 320 + rnd() * 200, (rnd() * 2 - 1) * 2800);
     scene.add(sp); clouds.push(sp);
   }
+  // horizon cloud banks: huge, low, warm-lit layers that give the sunset sky
+  // its depth in the reference — pink-orange shelves stacked at the rim
+  for (let i = 0; i < 12; i++) {
+    const ang = (i / 12) * Math.PI * 2 + rnd() * 0.4;
+    const dist = 3900 + rnd() * 900;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.5 + rnd() * 0.22, depthWrite: false, fog: false, color: new THREE.Color().setHSL(0.06 + rnd() * 0.03, 0.55, 0.72 + rnd() * 0.1) });
+    const sp = new THREE.Sprite(mat);
+    const w = 1500 + rnd() * 1300;
+    sp.scale.set(w, w * 0.30, 1);
+    sp.position.set(Math.cos(ang) * dist, 130 + rnd() * 190, Math.sin(ang) * dist);
+    scene.add(sp); clouds.push(sp);
+  }
+  // the sun itself: a soft additive glow sitting low in the north-west
+  const sc2 = document.createElement('canvas'); sc2.width = sc2.height = 256;
+  const sg = sc2.getContext('2d');
+  const sgrad = sg.createRadialGradient(128, 128, 4, 128, 128, 126);
+  sgrad.addColorStop(0, 'rgba(255,236,190,1)');
+  sgrad.addColorStop(0.18, 'rgba(255,205,120,0.75)');
+  sgrad.addColorStop(0.55, 'rgba(255,160,80,0.28)');
+  sgrad.addColorStop(1, 'rgba(255,140,70,0)');
+  sg.fillStyle = sgrad; sg.fillRect(0, 0, 256, 256);
+  const sunSpr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(sc2), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  sunSpr.scale.set(2400, 2400, 1);
+  sunSpr.position.set(-4300, 780, -2150);
+  scene.add(sunSpr);
 }
 buildClouds();
 
