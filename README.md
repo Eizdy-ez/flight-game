@@ -1,6 +1,10 @@
+[![make.fun · best-flight-game-20261126-0057](https://make.fun/badge/best-flight-game-20261126-0057.svg)](https://make.fun/bounty/best-flight-game-20261126-0057?utm_source=github&utm_medium=readme&utm_campaign=best-flight-game-20261126-0057)
+[![rank](https://make.fun/badge/best-flight-game-20261126-0057/Eizdy-ez/flight-game/rank.svg)](https://make.fun/bounty/best-flight-game-20261126-0057/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-flight-game-20261126-0057)
+[![reward](https://make.fun/badge/best-flight-game-20261126-0057/Eizdy-ez/flight-game/reward.svg)](https://make.fun/bounty/best-flight-game-20261126-0057?utm_source=github&utm_medium=readme&utm_campaign=best-flight-game-20261126-0057)
+
 # SKYHARBOR — Kestrel 07
 
-A flight sortie game for the make.fun "Make the best flight game" bounty.
+A flight sortie game for the make.fun "Make the best flight game" bounty: https://make.fun/bounty/best-flight-game-20261126-0057
 
 Take off from the city airport runway (RWY 18) in the Kestrel 07, thread six
 glowing gates in order around the mountain islands — over forested peaks, the
