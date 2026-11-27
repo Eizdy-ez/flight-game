@@ -1,4 +1,4 @@
-// GULLWING RIDGE — Kestrel 07: hand-in program for the best-flight-game bounty.
+// SKYHARBOR — Kestrel 07: hand-in program for the best-flight-game bounty.
 // The game in game/ is a complete low-poly flight sortie (take off, six gates, graded landing).
 // A working best-game-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES

@@ -1,5 +1,5 @@
 'use strict';
-/* GULLWING RIDGE — Kestrel 07. A complete low-poly flight sortie:
+/* SKYHARBOR — Kestrel 07. A complete low-poly flight sortie:
    take off from the island runway, thread six glowing bay gates in order,
    then land back on the same runway and get graded on the touchdown.
    Plain Three.js, no network, keyboard + mouse. */
@@ -15,17 +15,26 @@ function gauss(x, z, cx, cz, r, h) {
   const d2 = dx * dx + dz * dz;
   return d2 > 9 ? 0 : h * Math.exp(-d2 * 1.6);
 }
+/* coastal city landform: one dominant landmass, the sea kept to the south
+   bays, a flat urban shelf for the city, hill backdrop to the north */
+function cityMask(x, z) {
+  const dx = (x - 350) / 1180, dz = (z + 150) / 980;
+  const d = dx * dx + dz * dz;
+  return d >= 1 ? 0 : d <= 0.5 ? 1 : 1 - (d - 0.5) / 0.5;
+}
 function rawHeight(x, z) {
   let h = -26;                                       // seabed
-  h += gauss(x, z, 0, -60, 760, 150);                // main island mass
-  h += gauss(x, z, -140, -420, 300, 150);            // northern peak
-  h += gauss(x, z, 330, 260, 260, 66);               // eastern knoll
-  h += gauss(x, z, -430, 330, 230, 52);              // western knoll
-  h += gauss(x, z, -980, -880, 330, 118);            // NW island
-  h += gauss(x, z, 1020, -1080, 260, 84);            // NE island
-  h += gauss(x, z, 900, 780, 210, 58);               // SE islet
-  h += gauss(x, z, -1080, 900, 180, 44);             // SW islet
+  h += gauss(x, z, -300, -200, 2400, 122);           // the landmass itself
+  h += gauss(x, z, -700, -1500, 700, 118);           // northern hill backdrop
+  h += gauss(x, z, 900, -1350, 620, 96);
+  h += gauss(x, z, -150, -1950, 950, 128);
+  h += gauss(x, z, -1500, -500, 520, 62);            // western shoulder
+  h += gauss(x, z, 1500, 1550, 1500, -172);          // south-east bay (sea)
+  h += gauss(x, z, -1750, 1850, 1350, -158);         // south-west bay (sea)
   h += Math.sin(x * 0.004 + z * 0.003) * 3.2 * Math.max(0, Math.min(1, (h + 10) / 40));
+  // the city shelf: pull the urban ellipse down to a near-flat coastal plain
+  const cm = cityMask(x, z);
+  if (cm > 0 && h > 0) h = h + (16 - h) * cm * 0.94;
   return h;
 }
 function heightAt(x, z) {
@@ -234,11 +243,23 @@ function paintTerrainTexture() {
         const foam = Math.max(0, nFine - 0.42) * (1 - Math.abs(h - 1.6) / 1.8);
         r = mix(r, 244, Math.min(0.75, foam)); g = mix(g, 248, Math.min(0.75, foam)); b = mix(b, 244, Math.min(0.75, foam));
       }
+      // the city painted into the ground itself: grey blocks and a road grid
+      const cm = cityMask(wx, wz);
+      if (cm > 0.15 && h > 3.5) {
+        const block = hash2(Math.floor(wx / 130), Math.floor(wz / 130));
+        let ur = 126 + (nMid - 0.5) * 22 + block * 14, ug = 121 + (nMid - 0.5) * 20 + block * 10, ub = 112 + (nFine - 0.5) * 14;
+        if (nBig > 0.66) { ur = mix(ur, 96, 0.55); ug = mix(ug, 138, 0.55); ub = mix(ub, 70, 0.55); } // park pockets stay green
+        const rx = ((wx % 130) + 130) % 130, rz = ((wz % 130) + 130) % 130;
+        if (rx < 8 || rz < 8) { ur = mix(ur, 58, 0.8); ug = mix(ug, 59, 0.8); ub = mix(ub, 63, 0.8); }  // asphalt streets
+        const t = Math.min(1, cm * 1.15) * 0.88;
+        r = mix(r, ur, t); g = mix(g, ug, t); b = mix(b, ub, t);
+      }
       const i = (py * S + px) * 4;
       d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
     }
   }
   ctx.putImageData(img, 0, 0);
+  window.__terrainCanvas = c; // the same painting drives the satellite-style map
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 8;
   tex.encoding = THREE.sRGBEncoding;
@@ -358,6 +379,92 @@ function buildAirfield() {
 }
 buildAirfield();
 
+/* ---------- the city: instanced towers with lit windows, a terminal, parked jets ---------- */
+function facadeTextures() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#9aa0a4'; x.fillRect(0, 0, 128, 128);
+  const e = document.createElement('canvas'); e.width = e.height = 128;
+  const ex = e.getContext('2d');
+  ex.fillStyle = '#000000'; ex.fillRect(0, 0, 128, 128);
+  let seed = 5150;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let wy = 8; wy < 120; wy += 13) for (let wx = 8; wx < 120; wx += 11) {
+    const lit = rnd();
+    x.fillStyle = lit > 0.45 ? '#3d4c58' : '#6d7a84';
+    x.fillRect(wx, wy, 7, 8);
+    if (lit > 0.72) { ex.fillStyle = rnd() > 0.3 ? '#ffc978' : '#cfe4ff'; ex.fillRect(wx, wy, 7, 8); }
+  }
+  const map = new THREE.CanvasTexture(c);
+  const emissive = new THREE.CanvasTexture(e);
+  return { map, emissive };
+}
+function buildCity() {
+  const { map, emissive } = facadeTextures();
+  const mat = new THREE.MeshStandardMaterial({ map, emissiveMap: emissive, emissive: 0xffca7a, emissiveIntensity: 0.85, roughness: 0.7, metalness: 0.15 });
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  geo.translate(0, 0.5, 0);
+  const COUNT = 720;
+  const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
+  const sc = new THREE.Vector3(), pv = new THREE.Vector3();
+  const palette = [new THREE.Color(0xb8bcc0), new THREE.Color(0x9fb4c4), new THREE.Color(0xd8c9ae), new THREE.Color(0x8b98a8), new THREE.Color(0xc4b49a)];
+  let seed = 24680;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let n = 0, guard = 0;
+  while (n < COUNT && guard++ < 9000) {
+    const x = 350 + (rnd() * 2 - 1) * 1150, z = -150 + (rnd() * 2 - 1) * 950;
+    if (cityMask(x, z) < 0.5) continue;
+    if (Math.abs(x - RWY.x) < 85 && z > RWY.zTop - 170 && z < RWY.zBot + 130) continue;   // runway corridor
+    if (x > 30 && x < 260 && z > -430 && z < 300) continue;                               // airport grounds
+    const downtown = Math.max(0, 1 - Math.hypot(x - 620, z + 260) / 430);
+    const w = 17 + rnd() * 26, d = 17 + rnd() * 26;
+    const hgt = 13 + rnd() * 22 + downtown * downtown * (55 + rnd() * 85);
+    eu.set(0, (rnd() - 0.5) * 0.14, 0); q.setFromEuler(eu);
+    sc.set(w, hgt, d); pv.set(x, heightAt(x, z) - 0.4, z);
+    m4.compose(pv, q, sc);
+    mesh.setMatrixAt(n, m4);
+    mesh.setColorAt(n, palette[Math.floor(rnd() * palette.length)]);
+    n++;
+  }
+  mesh.count = n;
+  mesh.castShadow = false; mesh.receiveShadow = false;
+  scene.add(mesh);
+}
+buildCity();
+/* terminal block east of the apron + two parked jets waiting at gates */
+function buildTerminal() {
+  const wall = new THREE.MeshStandardMaterial({ color: 0xd9d4c8, roughness: 0.55, metalness: 0.1 });
+  const glassM = new THREE.MeshStandardMaterial({ color: 0x274b63, roughness: 0.12, metalness: 0.4 });
+  const term = new THREE.Mesh(new THREE.BoxGeometry(150, 16, 34), wall);
+  term.position.set(150, RWY.h + 8, -60); term.castShadow = true; scene.add(term);
+  const band = new THREE.Mesh(new THREE.BoxGeometry(150, 6, 35), glassM);
+  band.position.set(150, RWY.h + 10, -60); scene.add(band);
+  const roofT = new THREE.Mesh(new THREE.BoxGeometry(158, 2.5, 42), new THREE.MeshStandardMaterial({ color: 0x0e7c86, roughness: 0.5 }));
+  roofT.position.set(150, RWY.h + 17.2, -60); scene.add(roofT);
+  for (let i = 0; i < 3; i++) {
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(26, 4, 5), wall);
+    bridge.position.set(96, RWY.h + 6, -128 + i * 62); scene.add(bridge);
+  }
+  // parked jets: simple lofted-look silhouettes from cylinders and boxes
+  for (const [px, pz, ry] of [[78, -128, 0.5], [78, -4, -0.4]]) {
+    const jet = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.2, 30, 12), new THREE.MeshStandardMaterial({ color: 0xf0eee8, roughness: 0.35 }));
+    body.rotation.x = Math.PI / 2; jet.add(body);
+    const noseJ = new THREE.Mesh(new THREE.SphereGeometry(2.6, 12, 8), body.material);
+    noseJ.scale.set(1, 1, 1.8); noseJ.position.z = -15; jet.add(noseJ);
+    const wingJ = new THREE.Mesh(new THREE.BoxGeometry(26, 0.5, 5), body.material);
+    wingJ.position.set(0, -0.6, -1); jet.add(wingJ);
+    const finJ = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7, 4.5), roofT.material);
+    finJ.position.set(0, 4.4, 13.6); jet.add(finJ);
+    jet.position.set(px, RWY.h + 3.4, pz);
+    jet.rotation.y = ry;
+    jet.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+    scene.add(jet);
+  }
+}
+buildTerminal();
+
 /* trees on the green slopes: jittered-blob canopies, no two alike */
 function makeBlobGeo() {
   const geo = new THREE.IcosahedronGeometry(4.6, 1);
@@ -384,7 +491,7 @@ function buildTrees() {
   for (let i = 0; i < 4000 && n < 420; i++) {
     const x = (rnd() * 2 - 1) * 1500, z = (rnd() * 2 - 1) * 1500;
     const h = heightAt(x, z);
-    if (h < 8 || h > 95 || onRunway(x, z) || Math.abs(x) < 70 && z > -480 && z < 320) continue;
+    if (h < 8 || h > 95 || onRunway(x, z) || cityMask(x, z) > 0.35 || Math.abs(x) < 70 && z > -480 && z < 320) continue;
     const s = 0.8 + rnd() * 0.9;
     m4.makeScale(s, s, s).setPosition(x, h + 2 * s, z); trunks.setMatrixAt(n, m4);
     m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 7.6 * s, z); leaves.setMatrixAt(n, m4);
@@ -488,7 +595,8 @@ function buildPlane() {
     sk.fillStyle = 'rgb(' + v + ',' + v + ',' + (v - 4) + ')';
     sk.fillRect(srnd() * 2048, srnd() * 512, 2, 2);
   }
-  sk.fillStyle = '#e86f2e'; sk.fillRect(0, 46, 2048, 26);        // orange tail band (v near the tail)
+  sk.fillStyle = '#0e7c86'; sk.fillRect(0, 46, 2048, 26);        // teal tail band (v near the tail)
+  sk.fillStyle = '#d9a441'; sk.fillRect(0, 78, 2048, 7);         // thin gold pinstripe ahead of it
   sk.fillStyle = '#2b3438'; sk.fillRect(0, 494, 2048, 18);       // dark radome tip (v at the nose)
   sk.strokeStyle = 'rgba(90,90,88,0.32)'; sk.lineWidth = 2;
   for (let i = 0; i < 52; i++) { // longitudinal panel seams
@@ -510,7 +618,7 @@ function buildPlane() {
   skinTex.wrapS = THREE.RepeatWrapping;
   skinTex.anisotropy = 8;
   const white = new THREE.MeshStandardMaterial({ map: skinTex, roughness: 0.34, metalness: 0.08 });
-  const orange = new THREE.MeshStandardMaterial({ color: 0xe86f2e, roughness: 0.42, metalness: 0.05 });
+  const orange = new THREE.MeshStandardMaterial({ color: 0x0e7c86, roughness: 0.42, metalness: 0.05 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2b3438, roughness: 0.6, metalness: 0.25 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x101c26, roughness: 0.08, metalness: 0.4 });
   // lofted airframe: stations from nose tip to tail cone (z, half-width,
@@ -631,12 +739,12 @@ scene.add(plane.group);
 
 /* ---------- gates: six glowing rings flown in order ---------- */
 const GATE_DEFS = [
-  { x: 330,   y: 110,  z: 520,   ry: -0.5 },
-  { x: -380,  y: 80,  z: 560,   ry: 2.9 },
-  { x: -880,  y: 90,  z: 120,   ry: 2.2 },
-  { x: -1010, y: 105, z: -620,  ry: 1.5 },
-  { x: -560,  y: 120, z: -1080, ry: 0.9 },
-  { x: 60,    y: 95,  z: -760,  ry: 0.25 },
+  { x: -420,  y: 115, z: 560,   ry: 2.9 },   // harbour mouth, SW coast
+  { x: -980,  y: 150, z: -160,  ry: 1.9 },   // western shoulder
+  { x: -640,  y: 175, z: -980,  ry: 1.2 },   // northern hills
+  { x: 260,   y: 155, z: -1280, ry: 0.4 },   // skyline ridge
+  { x: 990,   y: 130, z: -720,  ry: -0.5 },  // NE suburbs
+  { x: 920,   y: 110, z: 160,   ry: -1.2 },  // east city edge, then home
 ];
 const GATE_R = 34;
 const gates = GATE_DEFS.map((d, i) => {
@@ -764,6 +872,8 @@ window.addEventListener('keydown', (e) => {
   if (['ArrowUp', 'ArrowDown', 'Space', 'ControlLeft', 'ControlRight'].includes(e.code)) e.preventDefault();
   if (e.code === 'KeyG' && S.mode === 'play') toggleGear();
   if (e.code === 'KeyF' && S.mode === 'play') cycleFlap();
+  if (e.code === 'KeyE' && S.mode === 'play') toggleEngine();
+  if (e.code === 'KeyC' && S.mode === 'play') cycleCam();
   if (e.code === 'KeyP' && S.mode === 'play') togglePause();
   if (e.code === 'KeyR') restart();
   if (e.code === 'KeyH') showBriefing();
@@ -788,6 +898,7 @@ const S = {
   onGround: true, airborne: false, time: 0,
   gateIdx: 0, score: 0, gLoad: 1, stalled: false,
   touchdown: null, finished: false, propSpin: 0,
+  engineOn: true, timeScale: 1, camMode: 0,
 };
 function resetSortie(free) {
   S.mode = 'play'; S.paused = false; S.free = !!free; S.finished = false;
@@ -800,7 +911,7 @@ function resetSortie(free) {
   paintGates(0, 0);
   document.getElementById('debrief').style.display = 'none';
   document.getElementById('briefing').style.display = 'none';
-  setMsg(free ? 'Free flight — the island is yours.' : 'Throttle up. Rotate at 62 kt.', 3.5);
+  setMsg(free ? 'Free flight — the city is yours.' : 'Throttle up. Rotate at 62 kt.', 3.5);
 }
 function toggleGear() {
   S.gearDown = !S.gearDown;
@@ -816,6 +927,15 @@ function cycleFlap() {
 function togglePause() {
   S.paused = !S.paused;
   setMsg(S.paused ? 'PAUSED — P to resume' : '', S.paused ? 999 : 0);
+}
+function toggleEngine() {
+  S.engineOn = !S.engineOn;
+  AudioSys.blip(S.engineOn ? 520 : 190, 0.18, 0.12);
+  setMsg(S.engineOn ? 'Engine ON' : 'Engine OFF — glide!', 1.6);
+}
+function cycleCam() {
+  S.camMode = (S.camMode + 1) % 3;
+  setMsg(['Camera: chase', 'Camera: far chase', 'Camera: tower'][S.camMode], 1.4);
 }
 let msgTimer = 0;
 function setMsg(t, secs) {
@@ -875,7 +995,7 @@ function stepFlight(dt) {
   S.stalled = S.airborne && kt < stallKt;
   const dragBase = 0.55 + (S.gearDown ? 0.5 : 0) + (S.flap === 15 ? 0.45 : S.flap === 30 ? 0.95 : 0)
     + (keys['Space'] ? 2.4 : 0) + Math.abs(S.roll) * 0.7;
-  let accel = S.throttle * 13.5 - dragBase * (S.speed / 34) - S.speed * S.speed * 0.0011 - 9.2 * _fwd.y * (S.onGround ? 0.25 : 1);
+  let accel = (S.engineOn ? S.throttle : 0) * 13.5 - dragBase * (S.speed / 34) - S.speed * S.speed * 0.0011 - 9.2 * _fwd.y * (S.onGround ? 0.25 : 1);
   if (S.onGround) accel -= (keys['KeyB'] ? 7.5 : 0.35); // rolling friction / brakes
   S.speed = Math.max(0, S.speed + accel * dt);
   // lift: keeps her up when fast & level, quits in a stall
@@ -965,7 +1085,7 @@ function finishSortie() {
   showDebrief({
     kicker: 'Sortie 01 · Golden Hour · Complete',
     title: 'TOUCHDOWN — ' + grade.label,
-    sub: 'Landed on RWY 18 (Gullwing Ridge) at ' + td.sinkFpm + ' FPM sink rate, ' +
+    sub: 'Landed on RWY 18 (Skyharbor) at ' + td.sinkFpm + ' FPM sink rate, ' +
       td.iasKt + ' KT, ' + td.centreM + 'm off centreline.',
     sink: td.sinkFpm + ' FPM', ias: td.iasKt + ' KT · ' + td.centreM + 'M',
     gates: S.gateIdx + ' / 6', fuel: Math.round(S.fuel) + '% / ' + Math.round(S.hull) + '%',
@@ -1001,30 +1121,60 @@ function showDebrief(d) {
 
 /* ---------- HUD: heading tape, attitude ball, V/S dial, sector map ---------- */
 const $ = (id) => document.getElementById(id);
-const hdgCtx = $('headingCanvas').getContext('2d');
 const attCtx = $('attCanvas').getContext('2d');
-const vsCtx = $('vsCanvas').getContext('2d');
+const spdCtx = $('spdCanvas').getContext('2d');
+const altCtx = $('altCanvas').getContext('2d');
 const mapCtx = $('mapCanvas').getContext('2d');
-function drawHeading(deg) {
-  const c = hdgCtx, W = 360, H = 30;
-  c.clearRect(0, 0, W, H);
-  c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(0, 0, W, H);
-  c.font = '10px Segoe UI'; c.textAlign = 'center';
-  const base = Math.floor((deg - 58) / 5) * 5;
-  for (let d = base; d <= deg + 58; d += 5) {
-    const dd = ((d % 360) + 360) % 360;
-    const px = W / 2 + (d - deg) * 2.6;
-    if (px < 8 || px > W - 8) continue;
-    const isCard = dd % 90 === 0, isTen = dd % 10 === 0;
-    c.fillStyle = isCard ? '#ffd9a0' : '#cfe9ea';
-    c.fillRect(px, isTen ? 4 : 9, 1.4, isTen ? 9 : 5);
-    if (isTen) c.fillText(dd === 0 ? 'N' : dd === 90 ? 'E' : dd === 180 ? 'S' : dd === 270 ? 'W' : String(dd).padStart(3, '0'), px, 26);
+/* analogue dials for the console, drawn like the reference panel's gauges */
+function dialFace(c, cx, cy, r, label) {
+  c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fillStyle = 'rgba(10,24,32,0.92)'; c.fill();
+  c.strokeStyle = 'rgba(160,225,230,0.65)'; c.lineWidth = 2; c.stroke();
+  c.fillStyle = '#9fd8dc'; c.font = '8.5px Segoe UI'; c.textAlign = 'center';
+  c.fillText(label, cx, cy + r * 0.52);
+}
+function drawSpeedDial(kt) {
+  const c = spdCtx, cx = 46, cy = 46, r = 41;
+  c.clearRect(0, 0, 92, 92);
+  dialFace(c, cx, cy, r, 'KNOTS');
+  const a0 = Math.PI * 0.75, sweep = Math.PI * 1.5;
+  c.fillStyle = '#eaf6f6'; c.font = '9px Segoe UI'; c.textAlign = 'center';
+  for (let v = 0; v <= 160; v += 20) {
+    const a = a0 + (v / 160) * sweep;
+    const x1 = cx + Math.cos(a) * (r - 4), y1 = cy + Math.sin(a) * (r - 4);
+    const x2 = cx + Math.cos(a) * (r - 10), y2 = cy + Math.sin(a) * (r - 10);
+    c.strokeStyle = v >= 120 ? '#ff8a7a' : '#cfe9ea'; c.lineWidth = 1.6;
+    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    c.fillText(String(v), cx + Math.cos(a) * (r - 17), cy + Math.sin(a) * (r - 17) + 3);
   }
-  c.fillStyle = '#ffb347';
-  c.beginPath(); c.moveTo(W / 2 - 6, 0); c.lineTo(W / 2 + 6, 0); c.lineTo(W / 2, 8); c.fill();
+  const a = a0 + (Math.min(170, kt) / 160) * sweep;
+  c.strokeStyle = '#ffc93c'; c.lineWidth = 2.6;
+  c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * (r - 8), cy + Math.sin(a) * (r - 8)); c.stroke();
+  c.fillStyle = '#fff'; c.beginPath(); c.arc(cx, cy, 3.4, 0, Math.PI * 2); c.fill();
+}
+function drawAltDial(ft) {
+  const c = altCtx, cx = 46, cy = 46, r = 41;
+  c.clearRect(0, 0, 92, 92);
+  dialFace(c, cx, cy, r, 'FEET x100');
+  c.fillStyle = '#eaf6f6'; c.font = '9px Segoe UI'; c.textAlign = 'center';
+  for (let v = 0; v < 20; v += 2) {
+    const a = -Math.PI / 2 + (v / 20) * Math.PI * 2;
+    c.fillText(String(v / 2 === 0 ? 0 : v / 2), cx + Math.cos(a) * (r - 13), cy + Math.sin(a) * (r - 13) + 3);
+    const x1 = cx + Math.cos(a) * (r - 4), y1 = cy + Math.sin(a) * (r - 4);
+    const x2 = cx + Math.cos(a) * (r - 8), y2 = cy + Math.sin(a) * (r - 8);
+    c.strokeStyle = '#cfe9ea'; c.lineWidth = 1.4;
+    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+  }
+  const aLong = -Math.PI / 2 + ((ft % 1000) / 1000) * Math.PI * 2;
+  const aShort = -Math.PI / 2 + ((ft % 10000) / 10000) * Math.PI * 2;
+  c.strokeStyle = '#fff'; c.lineWidth = 2.6;
+  c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(aLong) * (r - 9), cy + Math.sin(aLong) * (r - 9)); c.stroke();
+  c.strokeStyle = '#ffc93c'; c.lineWidth = 3.4;
+  c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(aShort) * (r - 20), cy + Math.sin(aShort) * (r - 20)); c.stroke();
+  c.fillStyle = '#fff'; c.beginPath(); c.arc(cx, cy, 3.4, 0, Math.PI * 2); c.fill();
 }
 function drawAttitude(pitch, roll) {
-  const c = attCtx, W = 86, cx = 43, cy = 43, r = 38;
+  const c = attCtx, W = 92, cx = 46, cy = 46, r = 41;
   c.clearRect(0, 0, W, W);
   c.save();
   c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.clip();
@@ -1042,52 +1192,49 @@ function drawAttitude(pitch, roll) {
   c.strokeStyle = '#ffd34d'; c.lineWidth = 3;
   c.beginPath(); c.moveTo(cx - 17, cy); c.lineTo(cx - 5, cy); c.lineTo(cx, cy + 5); c.lineTo(cx + 5, cy); c.lineTo(cx + 17, cy); c.stroke();
 }
-function drawVS(vsFpm) {
-  const c = vsCtx, W = 62, H = 86, cx = 31, cy = 43, r = 26;
-  c.clearRect(0, 0, W, H);
-  c.beginPath(); c.arc(cx, cy, r + 5, 0, Math.PI * 2);
-  c.fillStyle = 'rgba(255,255,255,0.07)'; c.fill();
-  c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 1.6; c.stroke();
-  c.fillStyle = '#cfe9ea'; c.font = '9px Segoe UI'; c.textAlign = 'center';
-  c.fillText('V/S', cx, cy + 16);
-  for (let v = -2000; v <= 2000; v += 1000) {
-    const a = Math.PI * 0.75 + (v + 2000) / 4000 * Math.PI * 1.5;
-    c.fillRect(cx + Math.cos(a) * (r - 3) - 0.7, cy + Math.sin(a) * (r - 3) - 0.7, 1.4, 1.4);
-  }
-  const clamped = Math.max(-2000, Math.min(2000, vsFpm));
-  const a = Math.PI * 0.75 + (clamped + 2000) / 4000 * Math.PI * 1.5;
-  c.strokeStyle = '#aef3e2'; c.lineWidth = 2.4;
-  c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * (r - 5), cy + Math.sin(a) * (r - 5)); c.stroke();
-}
-const MAP_SCALE = 172 / 3400;
-function w2m(x, z) { return [86 + x * MAP_SCALE, 75 + z * MAP_SCALE]; }
+const MAP_SCALE = 212 / 3400;
+function w2m(x, z) { return [106 + x * MAP_SCALE, 93 + z * MAP_SCALE]; }
 function drawMap() {
-  const c = mapCtx, W = 172, H = 150;
+  const c = mapCtx, W = 212, H = 186;
   c.clearRect(0, 0, W, H);
-  c.fillStyle = '#123a4a'; c.fillRect(0, 0, W, H);
-  c.strokeStyle = 'rgba(140,220,225,0.14)'; c.lineWidth = 1;
-  for (let gx = 0; gx < W; gx += 18) { c.beginPath(); c.moveTo(gx, 0); c.lineTo(gx, H); c.stroke(); }
-  for (let gy = 0; gy < H; gy += 18) { c.beginPath(); c.moveTo(0, gy); c.lineTo(W, gy); c.stroke(); }
-  // island blobs from the same height field the world is built from
-  c.fillStyle = '#5d9153';
-  for (let gx = -1600; gx <= 1600; gx += 90) for (let gz = -1600; gz <= 1600; gz += 90) {
-    if (rawHeight(gx, gz) > 3) { const [px, py] = w2m(gx, gz); c.fillRect(px - 2.4, py - 2.4, 4.8, 4.8); }
+  // satellite base: the very canvas the terrain is painted from, cropped to the sector
+  const tc = window.__terrainCanvas;
+  if (tc) {
+    const src = (3400 / (WORLD * 2)) * tc.width;
+    const sx = (tc.width - src) / 2;
+    c.drawImage(tc, sx, sx, src, src, 0, 0, W, H);
+    c.fillStyle = 'rgba(10,26,34,0.16)'; c.fillRect(0, 0, W, H);
+  } else {
+    c.fillStyle = '#123a4a'; c.fillRect(0, 0, W, H);
   }
-  const [rx, ry] = w2m(RWY.x, 0);
-  c.fillStyle = '#e8ecec'; c.fillRect(rx - 1.4, ry - 17, 2.8, 34);
+  c.strokeStyle = 'rgba(255,255,255,0.13)'; c.lineWidth = 1;
+  for (let gx = 0; gx < W; gx += 26) { c.beginPath(); c.moveTo(gx, 0); c.lineTo(gx, H); c.stroke(); }
+  for (let gy = 0; gy < H; gy += 26) { c.beginPath(); c.moveTo(0, gy); c.lineTo(W, gy); c.stroke(); }
+  const [rx, ry] = w2m(RWY.x, (RWY.zTop + RWY.zBot) / 2);
+  c.fillStyle = '#f2f4f4'; c.fillRect(rx - 1.6, ry - 21, 3.2, 42);
+  c.strokeStyle = 'rgba(0,0,0,0.35)'; c.strokeRect(rx - 1.6, ry - 21, 3.2, 42);
   gates.forEach((gt, i) => {
     const [px, py] = w2m(gt.def.x, gt.def.z);
-    c.beginPath(); c.arc(px, py, 4, 0, Math.PI * 2);
-    c.fillStyle = i < S.gateIdx ? '#39d98a' : i === S.gateIdx ? '#ffa726' : '#8a97a0';
+    c.beginPath(); c.arc(px, py, 4.4, 0, Math.PI * 2);
+    c.fillStyle = i < S.gateIdx ? '#39d98a' : i === S.gateIdx ? '#ffa726' : '#aeb9be';
     c.fill();
+    c.strokeStyle = 'rgba(0,0,0,0.45)'; c.stroke();
   });
+  // destination pin on the active target, like the reference map
+  const tgt = gates[S.gateIdx];
+  const [tx, ty] = tgt && S.mode === 'play' ? w2m(tgt.def.x, tgt.def.z) : w2m(RWY.x, 0);
+  c.fillStyle = '#ff4747';
+  c.beginPath(); c.arc(tx, ty - 9, 5, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.moveTo(tx - 4, ty - 6); c.lineTo(tx + 4, ty - 6); c.lineTo(tx, ty + 1); c.fill();
+  c.strokeStyle = '#fff'; c.lineWidth = 1.2;
+  c.beginPath(); c.arc(tx, ty - 9, 5, 0, Math.PI * 2); c.stroke();
   const [px, py] = w2m(S.pos.x, S.pos.z);
   const hd = compassDeg() * Math.PI / 180;
   c.save(); c.translate(px, py); c.rotate(hd);
-  c.fillStyle = '#fff';
-  c.beginPath(); c.moveTo(0, -6); c.lineTo(4, 5); c.lineTo(0, 2.4); c.lineTo(-4, 5); c.fill();
+  c.fillStyle = '#fff'; c.strokeStyle = 'rgba(0,0,0,0.5)';
+  c.beginPath(); c.moveTo(0, -6.4); c.lineTo(4.2, 5.2); c.lineTo(0, 2.6); c.lineTo(-4.2, 5.2); c.closePath(); c.fill(); c.stroke();
   c.restore();
-  c.fillStyle = '#ffd9a0'; c.font = 'bold 10px Segoe UI'; c.textAlign = 'right';
+  c.fillStyle = '#fff'; c.font = 'bold 10px Segoe UI'; c.textAlign = 'right';
   c.fillText('N', W - 6, 13);
 }
 function fmtTime(t) {
@@ -1100,17 +1247,17 @@ function updateHUD() {
   const aglFt = Math.max(0, Math.round((S.pos.y - heightAt(S.pos.x, S.pos.z)) * FT));
   const vsFpm = Math.round(S.vy * 196.85);
   const deg = compassDeg();
-  $('iasVal').textContent = kt;
-  $('altVal').textContent = altFt;
   $('aglVal').textContent = aglFt;
-  $('hdgVal').textContent = 'HDG ' + String(Math.round(deg)).padStart(3, '0') + '°';
+  $('hdgVal').textContent = String(Math.round(deg)).padStart(3, '0') + '°';
   $('gatesVal').textContent = String(S.gateIdx).padStart(2, '0') + ' / 06';
   $('ptsVal').textContent = String(S.score).padStart(5, '0');
   $('timeVal').textContent = fmtTime(S.time);
-  $('thrPct').textContent = Math.round(S.throttle * 100) + '%';
   $('thrPct2').textContent = Math.round(S.throttle * 100) + '%';
   $('thrBar').style.width = (S.throttle * 100) + '%';
+  $('thrFill').style.height = (S.throttle * 100) + '%';
+  $('thrPctBig').textContent = Math.round(S.throttle * 100) + '%';
   $('fuelBar').style.width = S.fuel + '%';
+  $('fuelBar').style.background = S.fuel < 25 ? '#ff5d5d' : '#39d98a';
   $('fuelPct').textContent = Math.round(S.fuel) + '%';
   $('hullBar').style.width = S.hull + '%';
   $('hullBar').style.background = S.hull < 45 ? '#ff5d5d' : '#57e6a3';
@@ -1119,26 +1266,44 @@ function updateHUD() {
   $('gVal').textContent = S.gLoad.toFixed(1);
   $('gearVal').textContent = S.gearDown ? 'DOWN' : 'UP';
   $('flapVal').textContent = S.flap + '°';
+  $('altBig').innerHTML = altFt + ' <span>FT</span>';
   $('airborneTxt').textContent = S.mode === 'debrief' ? 'SORTIE COMPLETE' : S.airborne ? 'AIRBORNE' : 'ON GROUND';
+  $('brakeLamp').className = (keys['KeyB'] && S.onGround) || (keys['Space'] && S.airborne) ? 'on' : '';
+  $('brakeLamp').id = 'brakeLamp';
+  const gl = $('gearLights').children;
+  for (let i = 0; i < 3; i++) gl[i].className = S.gearDown ? 'on' : '';
+  const starN = Math.min(5, S.gateIdx + (S.finished ? 1 : 0));
+  const stars = $('stars').children;
+  for (let i = 0; i < 5; i++) stars[i].className = i < starN ? 'lit' : '';
+  $('engineBtn').className = S.engineOn ? 'on' : '';
+  $('engineBtn').id = 'engineBtn';
+  $('yokeSvg').style.transform = 'rotate(' + (-S.roll * 46) + 'deg) translateY(' + (S.pitch * 14) + 'px)';
   const gt = gates[S.gateIdx];
   if (gt && !S.free && S.mode === 'play') {
     const dist = Math.round(S.pos.distanceTo(gt.grp.position));
     $('nextVal').textContent = dist + ' M';
+    $('objNext').textContent = 'Fly through Gate ' + String(S.gateIdx + 1).padStart(2, '0');
+    $('objTitle').textContent = S.airborne ? 'Fly the harbour circuit' : 'Line up and take off';
+    $('objSub').textContent = S.airborne ? 'Next checkpoint ' + dist + ' m ahead' : 'Rotate at 62 kt on RWY 18';
     $('gateTagTxt').textContent = 'GATE ' + String(S.gateIdx + 1).padStart(2, '0') + ' · ' + dist + ' M';
     $('gateTag').style.display = 'block';
   } else if (!S.free && S.mode === 'play') {
     $('nextVal').textContent = 'RTB';
+    $('objNext').textContent = 'Land back on RWY 18';
+    $('objTitle').textContent = 'Complete the landing';
+    $('objSub').textContent = 'Land the plane safely on the runway';
     $('gateTagTxt').textContent = 'ALL GATES CLEAR · LAND RWY 18';
     $('gateTag').style.display = 'block';
   } else {
     $('nextVal').textContent = '-- M';
+    $('objNext').textContent = S.mode === 'debrief' ? 'Sortie complete' : 'Free flight';
     $('gateTag').style.display = 'none';
   }
   $('warn').style.display = S.stalled ? 'block' : 'none';
   if (S.stalled) $('warn').textContent = 'STALL';
-  drawHeading(deg);
+  drawSpeedDial(kt);
   drawAttitude(S.pitch, S.roll);
-  drawVS(vsFpm);
+  drawAltDial(altFt);
   drawMap();
 }
 
@@ -1147,17 +1312,25 @@ const camTarget = new THREE.Vector3();
 const camPos = new THREE.Vector3(0, 40, 260);
 function stepCamera(dt) {
   orientation();
-  const back = _fwd.clone().multiplyScalar(-17);
-  const want = S.pos.clone().add(back).add(_up.clone().multiplyScalar(5.2));
+  plane.group.position.copy(S.pos);
+  plane.group.quaternion.copy(_quat);
+  plane.prop.rotation.z = S.propSpin;
+  if (S.camMode === 2 && S.mode === 'play') {
+    // tower view: the camera sits in the control tower cab and tracks the jet
+    camera.position.set(88, RWY.h + 52, 60);
+    camera.lookAt(S.pos.x, S.pos.y, S.pos.z);
+    camPos.copy(camera.position);
+    return;
+  }
+  const dist = S.camMode === 1 ? 30 : 17, lift = S.camMode === 1 ? 10 : 5.2;
+  const back = _fwd.clone().multiplyScalar(-dist);
+  const want = S.pos.clone().add(back).add(_up.clone().multiplyScalar(lift));
   want.y = Math.max(want.y, heightAt(want.x, want.z) + 3.4);
   const k = S.mode === 'briefing' ? 1.6 : 5.2;
   camPos.lerp(want, Math.min(1, dt * k));
   camera.position.copy(camPos);
   camTarget.copy(S.pos).add(_fwd.clone().multiplyScalar(26));
   camera.lookAt(camTarget);
-  plane.group.position.copy(S.pos);
-  plane.group.quaternion.copy(_quat);
-  plane.prop.rotation.z = S.propSpin;
 }
 
 /* ---------- flow helpers ---------- */
@@ -1184,6 +1357,18 @@ document.getElementById('freeBtn').addEventListener('click', () => { AudioSys.in
 document.getElementById('againBtn').addEventListener('click', () => restart());
 document.getElementById('nextBtn').addEventListener('click', () => { AudioSys.init(); resetSortie(false); setMsg('Sortie 2 flies the same circuit in reverse weather — circuit reset.', 3); });
 document.getElementById('briefBtn').addEventListener('click', () => showBriefing());
+document.getElementById('engineBtn').addEventListener('click', () => { AudioSys.init(); if (S.mode === 'play') toggleEngine(); });
+document.getElementById('pauseBtn').addEventListener('click', () => { if (S.mode === 'play') togglePause(); });
+document.getElementById('camBtn').addEventListener('click', () => { if (S.mode === 'play') cycleCam(); });
+document.getElementById('rstBtn').addEventListener('click', () => restart());
+document.getElementById('towerBtn').addEventListener('click', () => {
+  AudioSys.init();
+  setMsg(S.gateIdx >= gates.length ? 'Tower: cleared to land RWY 18, wind calm.' : 'Tower: Kestrel 07, circuit active — next gate is lit orange.', 3);
+});
+document.querySelectorAll('#spdChips button').forEach((b) => b.addEventListener('click', () => {
+  S.timeScale = parseFloat(b.dataset.ts);
+  document.querySelectorAll('#spdChips button').forEach((x) => x.classList.toggle('on', x === b));
+}));
 
 /* ---------- deterministic screenshot states (?shot=...) ---------- */
 function aimAt(tx, tz) {
@@ -1198,7 +1383,7 @@ function applyShotMode() {
     resetSortie(false);
     S.gateIdx = 4; S.score = 1200;
     paintGates(4, 4);
-    S.pos.set(-352, 128, -882);
+    S.pos.set(-352, 152, -882);
     aimAt(gates[4].def.x, gates[4].def.z);
     S.speed = 55; S.throttle = 0.66; S.fuel = 69;
     S.onGround = false; S.airborne = true; S.gearDown = false;
@@ -1223,7 +1408,7 @@ function applyShotMode() {
     showDebrief({
       kicker: 'Sortie 01 · Golden Hour · Complete',
       title: 'TOUCHDOWN — BUTTER LANDING',
-      sub: 'Landed on RWY 18 (Gullwing Ridge) at 148 FPM sink rate, 58 KT, 1.4m off centreline.',
+      sub: 'Landed on RWY 18 (Skyharbor) at 148 FPM sink rate, 58 KT, 1.4m off centreline.',
       sink: '148 FPM', ias: '58 KT · 1.4M', gates: '6 / 6',
       fuel: '44% / 96%', bonus: '+2,500', score: '4,986',
     });
@@ -1235,7 +1420,7 @@ const clock = new THREE.Clock();
 let orbitA = 0.8;
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(0.05, clock.getDelta());
+  const dt = Math.min(0.05, clock.getDelta()) * (S.mode === 'play' && !S.paused ? S.timeScale : 1);
   const t = clock.elapsedTime;
   sea.position.y = 0.4 + Math.sin(t * 0.5) * 0.18;
   seaNormal.offset.set(t * 0.008, t * 0.0031);
@@ -1250,7 +1435,7 @@ function animate() {
     stepFlight(dt);
     // ditching: nose at sea level over open water is a crash, not a landing
     if (S.mode === 'play' && S.pos.y <= 3.1 && rawHeight(S.pos.x, S.pos.z) < 0.5 && !onRunway(S.pos.x, S.pos.z)) {
-      crash('Ditchelled in Bellwater Bay. The Kestrel floats — briefly.');
+      crash('Ditched in the harbour. The Kestrel floats — briefly.');
     }
     // sortie completes once she has landed after all gates AND rolled to a near stop
     if (S.mode === 'play' && !S.free && !S.finished && S.touchdown && S.gateIdx >= gates.length && S.onGround && S.speed <= 20) {

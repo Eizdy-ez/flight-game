@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GULLWING RIDGE — Kestrel 07</title>
+<title>SKYHARBOR — Kestrel 07</title>
 <style>
   html, body { margin:0; padding:0; overflow:hidden; background:#79b5c9; height:100%;
     font-family:"Segoe UI", "Helvetica Neue", Arial, sans-serif; color:#eaf6f6;
@@ -13,48 +13,92 @@
     background:
       linear-gradient(180deg, rgba(255,176,92,.10) 0%, rgba(255,176,92,0) 26%, rgba(10,24,34,0) 78%, rgba(16,20,26,.20) 100%),
       radial-gradient(ellipse at 50% 42%, rgba(0,0,0,0) 55%, rgba(24,14,6,.42) 100%); }
-  .panel { position:fixed; background:rgba(9,38,48,.88); border:1px solid rgba(120,220,225,.35);
-    border-radius:6px; box-shadow:0 4px 18px rgba(0,20,30,.35); padding:10px 12px; z-index:5; }
+  .panel { position:fixed; background:rgba(7,26,34,.88); border:1px solid rgba(120,220,225,.32);
+    border-radius:8px; box-shadow:0 4px 18px rgba(0,20,30,.4); padding:10px 12px; z-index:5; }
   .lab { font-size:10px; letter-spacing:.18em; color:#9fd8dc; text-transform:uppercase; }
-  .big { font-size:34px; font-weight:700; line-height:1.05; color:#fff; font-variant-numeric:tabular-nums; }
-  .mid { font-size:15px; font-weight:600; color:#fff; font-variant-numeric:tabular-nums; }
   .small { font-size:11px; color:#cfe9ea; }
-  #titleBox { top:14px; left:14px; padding:10px 16px 10px 12px; border-left:5px solid #ffb347; }
-  #titleBox .t { font-size:21px; font-weight:800; letter-spacing:.06em; color:#fff; }
-  #airborne { top:86px; left:14px; padding:5px 12px; font-size:11px; letter-spacing:.14em; }
+  /* top-left: game name stays here, objective under it, speed chips below */
+  #titleBox { top:14px; left:14px; padding:10px 16px 10px 12px; border-left:5px solid #ffb347; max-width:330px; }
+  #titleBox .t { font-size:22px; font-weight:800; letter-spacing:.06em; color:#fff; }
+  #objTitle { font-size:13px; font-weight:700; letter-spacing:.1em; color:#ffcf87; margin-top:5px; text-transform:uppercase; }
+  #objSub { font-size:11.5px; color:#d7eeee; margin-top:1px; }
+  #spdChips { position:fixed; top:118px; left:14px; z-index:5; display:flex; gap:5px; }
+  #spdChips button { padding:5px 10px; font-size:10px; letter-spacing:.12em; background:rgba(7,26,34,.85);
+    color:#cfe9ea; border:1px solid rgba(120,220,225,.4); border-radius:5px; }
+  #spdChips button.on { background:#ffb347; color:#20303a; border-color:#ffb347; }
+  #airborne { top:152px; left:14px; padding:5px 12px; font-size:11px; letter-spacing:.14em; }
   #airborne .dot { color:#57e6a3; }
-  #headingBox { top:14px; left:50%; transform:translateX(-50%); width:380px; padding:6px 10px 8px; text-align:center; }
-  #headingCanvas { display:block; margin:0 auto; }
-  #hdgVal { font-size:17px; font-weight:700; color:#fff; margin-top:1px; }
-  #missionBox { top:14px; right:14px; width:262px; border-top:4px solid #ffb347; }
-  #missionBox .m1 { font-size:10px; letter-spacing:.16em; color:#ffcf87; }
-  #missionBox .m2 { font-size:23px; font-weight:800; color:#fff; margin:1px 0 2px; }
-  #missionBox .row { display:flex; justify-content:space-between; margin-top:6px; font-size:13px; }
-  #speedBox { left:14px; top:38%; width:104px; text-align:left; }
-  #altBox { right:14px; top:38%; width:104px; text-align:left; }
-  .gaugeBox { border:1.5px solid rgba(140,230,235,.6); border-radius:4px; padding:3px 8px; margin:4px 0 2px;
-    font-size:30px; font-weight:700; color:#aef3e2; font-variant-numeric:tabular-nums; }
-  #instrBox { left:14px; bottom:14px; width:326px; }
-  #instrBox .cols { display:flex; gap:12px; align-items:center; }
-  .barRow { display:flex; align-items:center; gap:6px; font-size:10px; letter-spacing:.08em; margin-top:5px; color:#cfe9ea; }
-  .barRow .nm { width:62px; }
-  .barRow .pc { width:36px; text-align:right; color:#fff; font-weight:600; }
-  .bar { flex:1; height:7px; background:rgba(255,255,255,.14); border-radius:3px; overflow:hidden; }
+  /* top-centre: mission star rating */
+  #starsBox { top:14px; left:50%; transform:translateX(-50%); text-align:center; padding:7px 18px 8px; }
+  #stars { font-size:21px; letter-spacing:.22em; color:#3a4c55; line-height:1; }
+  #stars .lit { color:#ffc93c; text-shadow:0 0 9px rgba(255,201,60,.65); }
+  #starsBox .row { display:flex; gap:16px; justify-content:center; margin-top:4px; font-size:11.5px; color:#cfe9ea; }
+  #starsBox b { color:#fff; }
+  /* top-right: fuel + pause */
+  #fuelBox { top:14px; right:14px; display:flex; align-items:center; gap:9px; padding:8px 12px; }
+  #fuelBox .fbar { width:110px; height:12px; background:rgba(255,255,255,.14); border-radius:3px; overflow:hidden; }
+  #fuelBar { height:100%; background:#39d98a; width:89%; }
+  #fuelPct { font-size:12px; font-weight:700; color:#fff; min-width:36px; }
+  #pauseBtn { background:rgba(255,255,255,.12); color:#fff; border:1px solid rgba(255,255,255,.35);
+    border-radius:6px; width:34px; height:30px; font-size:13px; font-weight:800; cursor:pointer; }
+  /* left edge: vertical throttle slider + brake lamp */
+  #thrBox { left:14px; top:50%; transform:translateY(-50%); text-align:center; padding:12px 10px; }
+  #thrTrack { width:22px; height:170px; margin:7px auto 5px; background:rgba(255,255,255,.12);
+    border-radius:5px; position:relative; overflow:hidden; }
+  #thrFill { position:absolute; bottom:0; left:0; right:0; height:0%;
+    background:linear-gradient(0deg, #39d98a 0%, #ffc93c 62%, #ff5d5d 100%); }
+  #thrPctBig { font-size:17px; font-weight:800; color:#fff; }
+  #brakeLamp { margin-top:9px; font-size:9.5px; letter-spacing:.14em; color:#7d99a3;
+    border:1px solid rgba(255,255,255,.18); border-radius:4px; padding:3px 2px; }
+  #brakeLamp.on { color:#fff; background:#c33; border-color:#f66; }
+  /* right column: satellite map + objective + round buttons */
+  #mapBox { right:14px; top:64px; width:228px; padding:8px; }
+  #mapCanvas { display:block; border-radius:4px; }
+  #objPanel { right:14px; top:288px; width:228px; padding:9px 12px; border-top:4px solid #ffb347; }
+  #objPanel .cur { font-size:10px; letter-spacing:.15em; color:#ffcf87; text-transform:uppercase; }
+  #objNext { font-size:14.5px; font-weight:700; color:#fff; margin:2px 0 1px; }
+  #roundBtns { position:fixed; right:22px; top:412px; z-index:5; display:flex; flex-direction:column; gap:9px; }
+  #roundBtns button { width:46px; height:46px; border-radius:50%; background:rgba(7,26,34,.88);
+    border:1.5px solid rgba(140,230,235,.55); color:#dff6f6; font-size:9px; font-weight:800;
+    letter-spacing:.06em; cursor:pointer; }
+  #roundBtns button:hover { background:rgba(30,70,84,.92); }
+  /* bottom console: engine, analogue gauges, tower stack, gear, yoke */
+  #console { left:50%; transform:translateX(-50%); bottom:12px; width:min(920px, 94vw);
+    display:flex; align-items:center; gap:14px; padding:10px 16px; }
+  #engineBtn { width:74px; height:74px; border-radius:50%; flex:none; cursor:pointer;
+    background:radial-gradient(circle at 35% 30%, #ff8a7a, #c1271b 68%); color:#fff;
+    border:3px solid rgba(255,255,255,.35); font-size:9.5px; font-weight:800; letter-spacing:.08em; line-height:1.5; }
+  #engineBtn.on { background:radial-gradient(circle at 35% 30%, #8bf0bb, #1d9e57 68%); }
+  .gauge { text-align:center; flex:none; }
+  .gauge .lab { margin-top:1px; }
+  #stackBox { flex:1; text-align:center; min-width:170px; }
+  #towerBtn { background:#123f52; color:#aef3e2; border:1px solid rgba(140,230,235,.5); border-radius:5px;
+    padding:5px 14px; font-size:11px; font-weight:800; letter-spacing:.12em; cursor:pointer; }
+  #altBig { font-size:31px; font-weight:800; color:#fff; line-height:1.1; font-variant-numeric:tabular-nums; }
+  #altBig span { font-size:12px; color:#9fd8dc; font-weight:600; }
+  .barRow { display:flex; align-items:center; gap:6px; font-size:9.5px; letter-spacing:.08em; margin-top:4px; color:#cfe9ea; }
+  .barRow .nm { width:58px; text-align:left; }
+  .barRow .pc { width:34px; text-align:right; color:#fff; font-weight:600; }
+  .bar { flex:1; height:6px; background:rgba(255,255,255,.14); border-radius:3px; overflow:hidden; }
   .bar > div { height:100%; background:#57e6a3; }
-  #mapBox { right:14px; bottom:14px; width:196px; }
-  #bottomBar { left:50%; transform:translateX(-50%); bottom:14px; width:520px; padding:7px 14px;
-    display:none; justify-content:space-between; text-align:center; }
-  #gateTag { position:fixed; left:50%; top:31%; transform:translateX(-50%); z-index:4; text-align:center;
+  #gearBox { text-align:center; flex:none; }
+  #gearLights { display:flex; gap:5px; justify-content:center; margin:4px 0 3px; }
+  #gearLights i { width:11px; height:11px; border-radius:50%; background:#39525c; display:block; }
+  #gearLights i.on { background:#39d98a; box-shadow:0 0 7px rgba(57,217,138,.8); }
+  #gearVal { font-size:12px; font-weight:800; color:#fff; letter-spacing:.1em; }
+  #yokeWrap { flex:none; text-align:center; }
+  #yokeSvg { transition:transform .08s linear; }
+  #gateTag { position:fixed; left:50%; top:29%; transform:translateX(-50%); z-index:4; text-align:center;
     pointer-events:none; }
-  #gateTag .gt { display:inline-block; background:rgba(9,38,48,.85); border:1px solid rgba(255,179,71,.7);
+  #gateTag .gt { display:inline-block; background:rgba(7,26,34,.85); border:1px solid rgba(255,179,71,.7);
     color:#ffd9a0; font-size:12px; letter-spacing:.14em; padding:4px 12px; border-radius:4px; }
-  #warn { position:fixed; left:50%; top:22%; transform:translateX(-50%); z-index:6; text-align:center;
+  #warn { position:fixed; left:50%; top:21%; transform:translateX(-50%); z-index:6; text-align:center;
     font-size:26px; font-weight:800; letter-spacing:.2em; color:#ff5d5d; text-shadow:0 2px 10px rgba(0,0,0,.5);
     display:none; pointer-events:none; }
-  #msg { position:fixed; left:50%; top:58%; transform:translateX(-50%); z-index:6; text-align:center;
+  #msg { position:fixed; left:50%; top:56%; transform:translateX(-50%); z-index:6; text-align:center;
     font-size:17px; font-weight:600; color:#fff; text-shadow:0 2px 8px rgba(0,0,0,.55); pointer-events:none; }
-  #keysHint { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); z-index:4; font-size:11px;
-    letter-spacing:.12em; color:rgba(255,255,255,.85); text-shadow:0 1px 4px rgba(0,0,0,.5); }
+  #keysHint { position:fixed; left:14px; bottom:12px; z-index:4; font-size:10px; width:120px; line-height:1.7;
+    letter-spacing:.1em; color:rgba(255,255,255,.8); text-shadow:0 1px 4px rgba(0,0,0,.5); }
   .overlay { position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center;
     background:rgba(4,24,32,.45); }
   .card { background:rgba(8,32,42,.94); border:1px solid rgba(120,220,225,.4); border-radius:10px;
@@ -88,75 +132,105 @@
 <div id="vignette"></div>
 
 <div class="panel" id="titleBox">
-  <div class="t">GULLWING RIDGE</div>
-  <div class="lab">Kestrel 07 &nbsp;/&nbsp; Flight Telemetry</div>
+  <div class="t">SKYHARBOR</div>
+  <div id="objTitle">Line up and take off</div>
+  <div id="objSub">Rotate at 62 kt on RWY 18</div>
+</div>
+<div id="spdChips">
+  <button data-ts="0.6">SLOW</button><button data-ts="1" class="on">NORMAL</button><button data-ts="1.5">FAST</button>
 </div>
 <div class="panel" id="airborne"><span class="dot">&#9679;</span> <span id="airborneTxt">ON GROUND</span> &nbsp;&nbsp; LIVE</div>
 
-<div class="panel" id="headingBox">
-  <canvas id="headingCanvas" width="360" height="30"></canvas>
-  <div id="hdgVal">HDG 020&deg;</div>
+<div class="panel" id="starsBox">
+  <div id="stars"><span>&#9733;</span><span>&#9733;</span><span>&#9733;</span><span>&#9733;</span><span>&#9733;</span></div>
+  <div class="row"><span>SCORE <b id="ptsVal">00000</b></span><span>TIME <b id="timeVal">00:00</b></span></div>
 </div>
 
-<div class="panel" id="missionBox">
-  <div class="m1">01 &nbsp;/&nbsp; BAY DEPARTURE</div>
-  <div class="m2">First Solo</div>
-  <div class="small">Rotate at 62 kt &middot; fly through six bay gates, then land back on RWY 18</div>
-  <div class="row"><span>GATES <b id="gatesVal">00 / 06</b></span><span>PTS <b id="ptsVal">00000</b></span></div>
-  <div class="row"><span class="small">NEXT <span id="nextVal">-- M</span></span><span class="small">TIME <span id="timeVal">00:00</span></span></div>
+<div class="panel" id="fuelBox">
+  <svg width="17" height="20" viewBox="0 0 24 28" fill="#9fd8dc"><path d="M3 2h13v24H3z M16 8h3a2 2 0 0 1 2 2v9a2.5 2.5 0 0 0 5 0V11l-3-4V4h-2z" fill-rule="evenodd" opacity=".9"/><rect x="6" y="6" width="7" height="6" fill="#07262f"/></svg>
+  <div class="fbar"><div id="fuelBar"></div></div>
+  <span id="fuelPct">89%</span>
+  <button id="pauseBtn" title="Pause (P)">| |</button>
 </div>
 
-<div class="panel" id="speedBox">
-  <div class="lab">Airspeed</div>
-  <div class="gaugeBox" id="iasVal">0</div>
-  <div class="lab">Knots</div>
-  <div class="small" style="margin-top:6px">THR <span id="thrPct">0%</span></div>
-</div>
-
-<div class="panel" id="altBox">
-  <div class="lab">Altitude</div>
-  <div class="gaugeBox" id="altVal">0</div>
-  <div class="lab">Feet MSL</div>
-  <div class="small" style="margin-top:6px">AGL <span id="aglVal">0</span> FT</div>
-</div>
-
-<div class="panel" id="instrBox">
-  <div class="lab" style="margin-bottom:6px">Flight Instruments</div>
-  <div class="cols">
-    <canvas id="attCanvas" width="86" height="86"></canvas>
-    <canvas id="vsCanvas" width="62" height="86"></canvas>
-    <div style="flex:1">
-      <div class="barRow"><span class="nm">FUEL</span><div class="bar"><div id="fuelBar" style="width:89%"></div></div><span class="pc" id="fuelPct">89%</span></div>
-      <div class="barRow"><span class="nm">THROTTLE</span><div class="bar"><div id="thrBar" style="width:0%;background:#ffb347"></div></div><span class="pc" id="thrPct2">0%</span></div>
-      <div class="barRow"><span class="nm">AIRFRAME</span><div class="bar"><div id="hullBar" style="width:100%"></div></div><span class="pc" id="hullPct">100%</span></div>
-      <div class="small" style="margin-top:7px">V/S <span id="vsVal">0</span> FPM &middot; G <span id="gVal">1.0</span></div>
-      <div class="small">GEAR <span id="gearVal">DOWN</span> &middot; FLAP <span id="flapVal">0&deg;</span></div>
-    </div>
-  </div>
+<div class="panel" id="thrBox">
+  <div class="lab">Throttle</div>
+  <div id="thrTrack"><div id="thrFill"></div></div>
+  <div id="thrPctBig">0%</div>
+  <div id="brakeLamp">BRAKE</div>
 </div>
 
 <div class="panel" id="mapBox">
-  <div class="lab" style="margin-bottom:5px">Bellwater Sector</div>
-  <canvas id="mapCanvas" width="172" height="150"></canvas>
+  <div class="lab" style="margin-bottom:5px">Skyharbor &middot; Live Map</div>
+  <canvas id="mapCanvas" width="212" height="186"></canvas>
+</div>
+<div class="panel" id="objPanel">
+  <div class="cur">Current Objective</div>
+  <div id="objNext">Take off from RWY 18</div>
+  <div class="small">Gates <b id="gatesVal">00 / 06</b> &middot; Next <span id="nextVal">-- M</span></div>
+  <div class="small">HDG <span id="hdgVal">180&deg;</span> &middot; AGL <span id="aglVal">0</span> FT</div>
+</div>
+<div id="roundBtns">
+  <button id="camBtn" title="Camera view">CAM</button>
+  <button id="rstBtn" title="Restart sortie (R)">RESET</button>
+</div>
+
+<div class="panel" id="console">
+  <button id="engineBtn" class="on">ENGINE<br>START<br>STOP</button>
+  <div class="gauge">
+    <canvas id="spdCanvas" width="92" height="92"></canvas>
+    <div class="lab">Airspeed</div>
+  </div>
+  <div class="gauge">
+    <canvas id="attCanvas" width="92" height="92"></canvas>
+    <div class="lab">Attitude</div>
+  </div>
+  <div class="gauge">
+    <canvas id="altCanvas" width="92" height="92"></canvas>
+    <div class="lab">Altimeter</div>
+  </div>
+  <div id="stackBox">
+    <button id="towerBtn">CONTROL TOWER</button>
+    <div class="lab" style="margin-top:5px">Altitude</div>
+    <div id="altBig">0 <span>FT</span></div>
+    <div class="small">V/S <span id="vsVal">0</span> FPM &middot; G <span id="gVal">1.0</span></div>
+    <div class="barRow"><span class="nm">THROTTLE</span><div class="bar"><div id="thrBar" style="width:0%;background:#ffb347"></div></div><span class="pc" id="thrPct2">0%</span></div>
+    <div class="barRow"><span class="nm">AIRFRAME</span><div class="bar"><div id="hullBar" style="width:100%"></div></div><span class="pc" id="hullPct">100%</span></div>
+  </div>
+  <div id="gearBox">
+    <div class="lab">Gear</div>
+    <div id="gearLights"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    <div id="gearVal">DOWN</div>
+    <div class="small" style="margin-top:4px">FLAP <span id="flapVal">0&deg;</span></div>
+  </div>
+  <div id="yokeWrap">
+    <svg id="yokeSvg" width="86" height="86" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="45" fill="rgba(255,255,255,.06)" stroke="rgba(140,230,235,.4)" stroke-width="2"/>
+      <path d="M50 50 L22 30 A34 34 0 0 1 78 30 L50 50 Z" fill="none" stroke="#dff6f6" stroke-width="6" stroke-linecap="round"/>
+      <path d="M50 50 L50 84" stroke="#dff6f6" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="8" fill="#dff6f6"/>
+    </svg>
+    <div class="lab">Yoke</div>
+  </div>
 </div>
 
 <div id="gateTag"><span class="gt" id="gateTagTxt">GATE 01 &middot; 0 M</span></div>
 <div id="warn">STALL</div>
 <div id="msg"></div>
-<div id="keysHint">W/S PITCH &middot; A/D BANK &middot; SHIFT/CTRL THROTTLE &middot; G GEAR &middot; F FLAP &middot; B BRAKE &middot; P PAUSE</div>
+<div id="keysHint">W/S PITCH &middot; A/D BANK &middot; SHIFT/CTRL THROTTLE &middot; G GEAR &middot; F FLAP &middot; B BRAKE &middot; E ENGINE &middot; C CAMERA &middot; P PAUSE &middot; H MANUAL</div>
 
 <div class="overlay" id="briefing">
   <div class="card">
-    <div class="lab">Sortie 01 &middot; Bay Departure</div>
-    <h1>GULLWING RIDGE</h1>
+    <div class="lab">Sortie 01 &middot; Harbour Circuit</div>
+    <h1>SKYHARBOR</h1>
     <h2>FIRST SOLO — KESTREL 07</h2>
-    <p>Throttle up on RWY 18, rotate at 62 knots, and thread all <b>six glowing bay gates</b> in order.
-       Then bring her home: gear down, flaps in, and touch down gently on the runway you left.
-       Sink rate and centreline decide your landing bonus.</p>
+    <p>Throttle up on RWY 18, rotate at 62 knots, and thread all <b>six glowing gates</b> around the
+       harbour city in order. Then bring her home: gear down, flaps in, and touch down gently on the
+       runway you left. Sink rate and centreline decide your landing bonus.</p>
     <div class="keysTable">
       <b>W / S</b> pitch &nbsp; <b>A / D</b> bank &amp; turn &nbsp; <b>SHIFT / CTRL</b> throttle<br>
       <b>G</b> landing gear &nbsp; <b>F</b> flaps &nbsp; <b>B</b> wheel brake &nbsp; <b>SPACE</b> air brake<br>
-      <b>MOUSE</b> hold &amp; drag = yoke &nbsp; <b>P</b> pause &nbsp; <b>R</b> restart &nbsp; <b>H</b> this manual
+      <b>E</b> engine on/off &nbsp; <b>C</b> camera &nbsp; <b>MOUSE</b> hold &amp; drag = yoke &nbsp; <b>P</b> pause &nbsp; <b>R</b> restart &nbsp; <b>H</b> manual
     </div>
     <div class="btnRow">
       <button class="green" id="flyBtn">FLY SORTIE</button>
@@ -180,7 +254,7 @@
       <div class="cell"><div class="k">Sortie Score</div><div class="v" id="debScore">0</div></div>
     </div>
     <div class="missionList">
-      <div class="active">1. Island Circuit &amp; Landing</div>
+      <div class="active">1. Harbour Circuit &amp; Landing</div>
       <div>2. Caldera Rim Redline</div>
       <div>3. Volcanic Squall Recon</div>
       <div>4. Bingo Fuel Rescue</div>
