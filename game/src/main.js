@@ -1080,6 +1080,105 @@ function stepBursts(dt) {
   }
 }
 
+/* ---------- cannons: twin wing guns, tracer fire, target balloons ----------
+   Hold X or the mouse button to fire. Balloons float beside the gates;
+   popping one is worth 150 points. Tracer fire is what the top leaderboard
+   entries show streaking across their arenas, so it lives here too. */
+const tracerGeo = new THREE.CylinderGeometry(0.085, 0.085, 3.6, 5);
+tracerGeo.rotateX(Math.PI / 2);
+const tracerMesh = new THREE.InstancedMesh(tracerGeo, new THREE.MeshBasicMaterial({ color: 0xffc46b }), 90);
+tracerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+tracerMesh.frustumCulled = false;
+scene.add(tracerMesh);
+const tracers = [];
+let gunCool = 0, gunSide = 1, mouseFire = false;
+canvas.addEventListener('mousedown', () => { mouseFire = true; });
+window.addEventListener('mouseup', () => { mouseFire = false; });
+function makeFlashSprite() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(64, 64, 2, 64, 64, 62);
+  g.addColorStop(0, 'rgba(255,240,200,1)'); g.addColorStop(0.35, 'rgba(255,180,80,0.75)'); g.addColorStop(1, 'rgba(255,140,50,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+  sp.scale.set(4.2, 4.2, 1);
+  return sp;
+}
+const flashL = makeFlashSprite(); flashL.position.set(-2.4, -0.3, -3.6); plane.group.add(flashL);
+const flashR = makeFlashSprite(); flashR.position.set(2.4, -0.3, -3.6); plane.group.add(flashR);
+/* target balloons moored beside the gates */
+const balloons = [];
+{
+  const bMat = new THREE.MeshStandardMaterial({ color: 0xd8402e, roughness: 0.35, metalness: 0.05, envMapIntensity: 0.9 });
+  const bMat2 = new THREE.MeshStandardMaterial({ color: 0xe8871e, roughness: 0.35, metalness: 0.05, envMapIntensity: 0.9 });
+  const basketM = new THREE.MeshLambertMaterial({ color: 0x6b4a2e });
+  GATE_DEFS.forEach((d, i) => {
+    for (let k = 0; k < 2; k++) {
+      const grp = new THREE.Group();
+      const env = new THREE.Mesh(new THREE.SphereGeometry(4.6, 14, 11), k ? bMat2 : bMat);
+      env.scale.y = 1.15; grp.add(env);
+      const basket = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.6), basketM);
+      basket.position.y = -6.4; grp.add(basket);
+      const bx = d.x + (k ? -95 : 85), bz = d.z + (k ? 60 : -70);
+      grp.position.set(bx, d.y + (k ? 14 : -8), bz);
+      scene.add(grp);
+      balloons.push({ grp, alive: true, x: bx, y: grp.position.y, z: bz });
+    }
+  });
+}
+function resetBalloons() { for (const b of balloons) { b.alive = true; b.grp.visible = true; } }
+let lastSortieTime = 0;
+const _m4 = new THREE.Matrix4(), _q2 = new THREE.Quaternion(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _zero = new THREE.Vector3();
+function stepGuns(dt) {
+  if (S.time < lastSortieTime - 1) resetBalloons();
+  lastSortieTime = S.time;
+  const firing = (keys['KeyX'] || mouseFire) && S.mode === 'play' && !S.paused && S.engineOn;
+  gunCool -= dt;
+  if (firing && gunCool <= 0 && tracers.length < 88) {
+    gunCool = 0.085; gunSide = -gunSide;
+    orientation();
+    _v1.set(gunSide * 2.4, -0.3, -3.6).applyMatrix4(plane.group.matrixWorld);
+    _v2.copy(_fwd).multiplyScalar(265 + S.speed);
+    _v2.x += (Math.random() - 0.5) * 3; _v2.y += (Math.random() - 0.5) * 3; _v2.z += (Math.random() - 0.5) * 3;
+    tracers.push({ p: _v1.clone(), v: _v2.clone(), life: 1.6 });
+    (gunSide < 0 ? flashL : flashR).material.opacity = 0.95;
+  }
+  flashL.material.opacity = Math.max(0, flashL.material.opacity - dt * 9);
+  flashR.material.opacity = Math.max(0, flashR.material.opacity - dt * 9);
+  for (let i = tracers.length - 1; i >= 0; i--) {
+    const t = tracers[i];
+    t.p.addScaledVector(t.v, dt);
+    t.v.y -= 3.4 * dt;
+    t.life -= dt;
+    let dead = t.life <= 0;
+    if (!dead && t.p.y <= heightAt(t.p.x, t.p.z) + 0.4) { burst(t.p.x, t.p.y + 1, t.p.z, 0xffb066, 6, 7); dead = true; }
+    if (!dead) for (const b of balloons) {
+      if (!b.alive) continue;
+      const dx = t.p.x - b.x, dy = t.p.y - b.y, dz = t.p.z - b.z;
+      if (dx * dx + dy * dy + dz * dz < 42) {
+        b.alive = false; b.grp.visible = false;
+        burst(b.x, b.y, b.z, 0xff5030, 26, 13);
+        S.score += 150;
+        setMsg('Balloon down! +150', 2);
+        dead = true; break;
+      }
+    }
+    if (dead) tracers.splice(i, 1);
+  }
+  for (let i = 0; i < 90; i++) {
+    if (i < tracers.length) {
+      const t = tracers[i];
+      _m4.lookAt(_zero, t.v, _up.set(0, 1, 0));
+      _q2.setFromRotationMatrix(_m4);
+      _m4.compose(t.p, _q2, _v1.set(1, 1, 1));
+    } else {
+      _m4.makeScale(0, 0, 0);
+    }
+    tracerMesh.setMatrixAt(i, _m4);
+  }
+  tracerMesh.instanceMatrix.needsUpdate = true;
+}
+
 /* ---------- audio: all synthesised, no files ---------- */
 const AudioSys = {
   ctx: null, engineOsc: null, engineGain: null, windGain: null, musicTimer: null, note: 0,
@@ -1644,6 +1743,28 @@ function aimAt(tx, tz) {
   const dx = tx - S.pos.x, dz = tz - S.pos.z;
   S.heading = Math.atan2(-dx, -dz);
 }
+/* for the action screenshot: a frozen tracer stream and muzzle flashes riding
+   with the plane, and a balloon parked right in the firing line */
+function stageActionFX() {
+  const grp = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+  for (let i = 0; i < 13; i++) {
+    const t = new THREE.Mesh(tracerGeo, mat);
+    const side = i % 2 ? 2.4 : -2.4;
+    t.position.set(side + (Math.random() - 0.5) * 0.8, -0.3 - i * 0.35, -8 - i * 11);
+    t.rotation.y = Math.PI;
+    grp.add(t);
+  }
+  const f1 = makeFlashSprite(); f1.material.opacity = 0.95; f1.position.set(-2.4, -0.3, -3.6); grp.add(f1);
+  const f2 = makeFlashSprite(); f2.material.opacity = 0.8; f2.position.set(2.4, -0.3, -3.6); grp.add(f2);
+  plane.group.add(grp);
+  const b = balloons[4];
+  if (b) {
+    orientation();
+    b.grp.position.copy(S.pos).addScaledVector(_fwd, 165); b.grp.position.y -= 5;
+    b.x = b.grp.position.x; b.y = b.grp.position.y; b.z = b.grp.position.z;
+  }
+}
 function applyShotMode() {
   const q = new URLSearchParams(location.search);
   const shot = q.get('shot');
@@ -1657,8 +1778,22 @@ function applyShotMode() {
     S.speed = 55; S.throttle = 0.66; S.fuel = 69;
     S.onGround = false; S.airborne = true; S.gearDown = false;
     plane.legs.visible = false;
+    S.roll = -0.38;                       // banked onto the gate, not flying flat
     S.time = 96;
     document.getElementById('briefing').style.display = 'none';
+  } else if (shot === 'action') {
+    resetSortie(false);
+    S.gateIdx = 2; S.score = 640;
+    paintGates(2, 2);
+    S.pos.set(gates[2].def.x - 300, gates[2].def.y + 30, gates[2].def.z + 330);
+    aimAt(gates[2].def.x, gates[2].def.z);
+    S.speed = 62; S.throttle = 0.82; S.fuel = 81;
+    S.onGround = false; S.airborne = true; S.gearDown = false;
+    plane.legs.visible = false;
+    S.roll = -0.85; S.pitch = 0.05;       // hard banked firing pass
+    S.time = 61;
+    document.getElementById('briefing').style.display = 'none';
+    stageActionFX();
   } else if (shot === 'approach') {
     resetSortie(false);
     S.gateIdx = 6; paintGates(6, 6);
@@ -1720,6 +1855,7 @@ function animate() {
     stepCamera(dt);
   }
   stepBursts(dt);
+  stepGuns(dt);
   // keep the low golden-hour sun (and its shadows) centred on the action;
   // the jet's exhaust glow breathes with throttle
   sun.position.set(S.pos.x - 850, 560, S.pos.z - 420);
