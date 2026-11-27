@@ -82,6 +82,29 @@ function buildSky() {
   return sky;
 }
 scene.add(buildSky());
+/* image-based light: a painted equirect sky (gradient + sun blob + sea band)
+   run through PMREM so standard materials pick up real sky reflections */
+function buildEnvironment() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+  const x = c.getContext('2d');
+  const grad = x.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, '#3d6474'); grad.addColorStop(0.42, '#b3beb2');
+  grad.addColorStop(0.52, '#f6bf78'); grad.addColorStop(0.58, '#7d94a0');
+  grad.addColorStop(1, '#274b5c');
+  x.fillStyle = grad; x.fillRect(0, 0, 1024, 512);
+  const sunG = x.createRadialGradient(300, 250, 6, 300, 250, 190);
+  sunG.addColorStop(0, 'rgba(255,230,180,0.95)');
+  sunG.addColorStop(0.25, 'rgba(255,190,110,0.55)');
+  sunG.addColorStop(1, 'rgba(255,170,90,0)');
+  x.fillStyle = sunG; x.fillRect(0, 0, 1024, 512);
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.encoding = THREE.sRGBEncoding;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromEquirectangular(tex).texture;
+  tex.dispose(); pmrem.dispose();
+}
+buildEnvironment();
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.5, 12000);
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -101,8 +124,31 @@ scene.add(sun);
 scene.add(sun.target);
 
 /* ---------- terrain mesh, coloured by height ---------- */
+/* shared painted grain: one noise canvas textures terrain, sea and runway */
+function makeNoiseTexture(size, base, spread, blotch) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgb(' + base + ',' + base + ',' + base + ')'; x.fillRect(0, 0, size, size);
+  let seed = 424243;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < blotch; i++) {
+    const v = base + Math.round((rnd() - 0.5) * spread);
+    x.fillStyle = 'rgba(' + v + ',' + v + ',' + v + ',0.16)';
+    x.beginPath(); x.arc(rnd() * size, rnd() * size, 8 + rnd() * 42, 0, Math.PI * 2); x.fill();
+  }
+  const img = x.getImageData(0, 0, size, size), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (rnd() - 0.5) * spread * 0.9;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
+  x.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+const grainTex = makeNoiseTexture(512, 205, 70, 260);
 function buildTerrain() {
-  const size = WORLD * 2, seg = 150;
+  const size = WORLD * 2, seg = 200;
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -120,12 +166,18 @@ function buildTerrain() {
     else if (h < 48) tmp.copy(cGrass).lerp(cForest, (h - 6) / 42);
     else if (h < 105) tmp.copy(cForest).lerp(cRock, (h - 48) / 57);
     else tmp.copy(cRock).lerp(cPeak, Math.min(1, (h - 105) / 60));
+    // steep faces read as bare rock whatever their height, like the reference crags
+    const slope = Math.abs(heightAt(x + 16, z) - h) + Math.abs(heightAt(x, z + 16) - h);
+    if (h > 6 && slope > 9) tmp.lerp(cRock, Math.min(0.75, (slope - 9) / 14));
     const jitter = ((i * 7919) % 13) / 13 * 0.05 - 0.025;
     colors[i * 3] = tmp.r + jitter; colors[i * 3 + 1] = tmp.g + jitter; colors[i * 3 + 2] = tmp.b + jitter;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const tex = grainTex.clone();
+  tex.needsUpdate = true;
+  tex.repeat.set(30, 30);
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   return mesh;
@@ -133,9 +185,12 @@ function buildTerrain() {
 scene.add(buildTerrain());
 
 /* sea surface (translucent, animated in the loop) */
+const seaBump = grainTex.clone();
+seaBump.needsUpdate = true;
+seaBump.repeat.set(90, 90);
 const sea = new THREE.Mesh(
   new THREE.PlaneGeometry(WORLD * 2.4, WORLD * 2.4),
-  new THREE.MeshPhongMaterial({ color: 0x2e86ab, specular: 0x7fa8ad, shininess: 170, transparent: true, opacity: 0.9 })
+  new THREE.MeshPhongMaterial({ color: 0x2e86ab, specular: 0x5f8a90, shininess: 190, transparent: true, opacity: 0.9, bumpMap: seaBump, bumpScale: 0.7 })
 );
 sea.rotation.x = -Math.PI / 2; sea.position.y = 0.4;
 scene.add(sea);
@@ -147,16 +202,38 @@ function box(w, h, d, color, x, y, z, ry) {
   m.position.set(x, y, z); if (ry) m.rotation.y = ry;
   scene.add(m); return m;
 }
+function runwayTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 1024;
+  const x = c.getContext('2d');
+  x.fillStyle = '#33373c'; x.fillRect(0, 0, 256, 1024);
+  let seed = 777001;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 9000; i++) {
+    const v = 42 + Math.round(rnd() * 26);
+    x.fillStyle = 'rgb(' + v + ',' + (v + 3) + ',' + (v + 7) + ')';
+    x.fillRect(rnd() * 256, rnd() * 1024, 2, 2);
+  }
+  // rubber streaks in both touchdown zones
+  for (const zy of [150, 874]) {
+    for (let i = 0; i < 260; i++) {
+      x.fillStyle = 'rgba(12,12,14,' + (0.05 + rnd() * 0.13) + ')';
+      x.fillRect(96 + rnd() * 64, zy + (rnd() - 0.5) * 130, 3 + rnd() * 5, 8 + rnd() * 22);
+    }
+  }
+  x.fillStyle = '#e8ecec';
+  x.fillRect(10, 0, 5, 1024); x.fillRect(241, 0, 5, 1024);      // edge lines
+  for (let z = 70; z < 980; z += 62) x.fillRect(124, z, 8, 34); // centreline dashes
+  for (const zy of [18, 988]) for (let b = 0; b < 6; b++) x.fillRect(28 + b * 36, zy, 20, 12); // threshold bars
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
 function buildAirfield() {
   const rw = new THREE.Mesh(new THREE.BoxGeometry(RWY.w, 1.2, RWY.zBot - RWY.zTop),
-    new THREE.MeshLambertMaterial({ color: 0x2c3136 }));
+    new THREE.MeshLambertMaterial({ map: runwayTexture() }));
   rw.position.set(RWY.x, RWY.h + 0.4, (RWY.zTop + RWY.zBot) / 2);
+  rw.receiveShadow = true;
   scene.add(rw);
-  const stripeMat = new THREE.MeshBasicMaterial({ color: 0xf4f6f6 });
-  for (let z = RWY.zTop + 26; z < RWY.zBot - 10; z += 44) {
-    const s = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.25, 20), stripeMat);
-    s.position.set(RWY.x, RWY.h + 1.05, z); scene.add(s);
-  }
   for (const sx of [-1, 1]) for (let z = RWY.zTop + 8; z < RWY.zBot; z += 34) {
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 6),
       new THREE.MeshBasicMaterial({ color: 0xfff6c9 }));
@@ -252,18 +329,45 @@ function flatShape(points, thickness) {
 }
 function buildPlane() {
   const g = new THREE.Group();
-  const white = new THREE.MeshPhongMaterial({ color: 0xf2f0ea, shininess: 34, specular: 0x666055 });
-  const orange = new THREE.MeshPhongMaterial({ color: 0xe86f2e, shininess: 30, specular: 0x664422 });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x2b3438, flatShading: true });
-  const glass = new THREE.MeshPhongMaterial({ color: 0x14242e, shininess: 140, specular: 0xd8ecff });
-  const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.78, 9.6, 18), white);
-  fus.rotation.x = Math.PI / 2; g.add(fus);
-  const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.92, 2.6, 18), white);
-  nose.rotation.x = Math.PI / 2; nose.position.z = -6.05; g.add(nose);
-  const tailCone = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.5, 1.8, 14), white);
-  tailCone.rotation.x = Math.PI / 2; tailCone.position.z = 5.6; g.add(tailCone);
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.86, 16, 12), glass);
-  cockpit.scale.set(0.78, 0.62, 1.9); cockpit.position.set(0, 0.66, -3.3); g.add(cockpit);
+  // painted skin for the lathed body: faint panel lines + grime, drawn in code
+  const skinC = document.createElement('canvas'); skinC.width = 1024; skinC.height = 256;
+  const sk = skinC.getContext('2d');
+  sk.fillStyle = '#f2f0ea'; sk.fillRect(0, 0, 1024, 256);
+  let seed = 31337;
+  const srnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 5200; i++) {
+    const v = 226 + Math.round(srnd() * 22);
+    sk.fillStyle = 'rgb(' + v + ',' + v + ',' + (v - 4) + ')';
+    sk.fillRect(srnd() * 1024, srnd() * 256, 2, 2);
+  }
+  sk.strokeStyle = 'rgba(90,90,88,0.35)'; sk.lineWidth = 2;
+  for (let i = 0; i < 26; i++) { // longitudinal panel seams (u runs around the body)
+    const px = (i / 26) * 1024 + srnd() * 8;
+    sk.beginPath(); sk.moveTo(px, 0); sk.lineTo(px, 256); sk.stroke();
+  }
+  sk.strokeStyle = 'rgba(90,90,88,0.22)';
+  for (const py of [42, 128, 214]) { sk.beginPath(); sk.moveTo(0, py); sk.lineTo(1024, py); sk.stroke(); }
+  sk.fillStyle = 'rgba(70,64,58,0.10)';
+  for (let i = 0; i < 26; i++) sk.fillRect(srnd() * 1024, 190 + srnd() * 60, 20 + srnd() * 60, 3); // belly grime
+  const skinTex = new THREE.CanvasTexture(skinC);
+  skinTex.wrapS = THREE.RepeatWrapping;
+  const white = new THREE.MeshStandardMaterial({ map: skinTex, roughness: 0.34, metalness: 0.08 });
+  const orange = new THREE.MeshStandardMaterial({ color: 0xe86f2e, roughness: 0.42, metalness: 0.05 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2b3438, roughness: 0.6, metalness: 0.25 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x101c26, roughness: 0.08, metalness: 0.4 });
+  // one continuous lathed body: the profile curve IS the aeroplane's shape,
+  // nose tip to tail cone in a single smooth surface (no cylinder joins)
+  const profile = [
+    [0.01, -7.4], [0.2, -7.05], [0.46, -6.3], [0.72, -5.3], [0.9, -4.1],
+    [0.98, -2.2], [1.0, 0.0], [0.98, 2.0], [0.92, 3.6], [0.82, 5.0],
+    [0.64, 6.0], [0.42, 6.6], [0.01, 6.95],
+  ].map((p) => new THREE.Vector2(p[0], p[1]));
+  const fusGeo = new THREE.LatheGeometry(profile, 30);
+  fusGeo.rotateX(Math.PI / 2); // lathe axis becomes the body's long axis, nose to -Z
+  const fus = new THREE.Mesh(fusGeo, white);
+  g.add(fus);
+  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.86, 20, 14), glass);
+  cockpit.scale.set(0.76, 0.6, 2.0); cockpit.position.set(0, 0.62, -3.5); g.add(cockpit);
   const spine = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 6.4), orange);
   spine.position.set(0, 0.88, 1.2); g.add(spine);
   // swept wings: shape drawn with +Y as forward, extruded thin, laid flat
@@ -284,21 +388,21 @@ function buildPlane() {
     nav.position.set(sx * 6.9, -0.3, 0.6); g.add(nav);
     // rear engines with glowing exhausts
     const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.54, 3.6, 14), dark);
-    eng.rotation.x = Math.PI / 2; eng.position.set(sx * 1.08, -0.28, 3.6); g.add(eng);
-    const exhaust = new THREE.Mesh(new THREE.CircleGeometry(0.4, 14),
-      new THREE.MeshBasicMaterial({ color: 0xd97a24 }));
-    exhaust.position.set(sx * 1.08, -0.28, 5.42); g.add(exhaust);
+    eng.rotation.x = Math.PI / 2; eng.position.set(sx * 1.08, -0.28, 4.6); g.add(eng);
+    const exhaust = new THREE.Mesh(new THREE.CircleGeometry(0.33, 14),
+      new THREE.MeshBasicMaterial({ color: 0xb85f1a }));
+    exhaust.position.set(sx * 1.08, -0.28, 6.42); g.add(exhaust);
     // horizontal stabilisers
     const stabGeo = flatShape([[1.0 * sx, 0.9], [3.1 * sx, -0.5], [3.1 * sx, -1.2], [1.0 * sx, -0.7]], 0.16);
     const stab = new THREE.Mesh(stabGeo, white);
-    stab.rotation.x = -Math.PI / 2; stab.position.set(0, 0.28, 4.4); g.add(stab);
+    stab.rotation.x = -Math.PI / 2; stab.position.set(0, 0.28, 5.4); g.add(stab);
     // canted twin fins, orange-tipped
     const finGeo = flatShape([[2.2, 0.1], [0.7, 2.6], [-0.9, 2.6], [-1.7, 0.1]], 0.16);
     const fin = new THREE.Mesh(finGeo, white);
     fin.rotation.y = Math.PI / 2;
     const finWrap = new THREE.Group();
     finWrap.add(fin);
-    finWrap.position.set(sx * 1.62, 0.3, 3.05);
+    finWrap.position.set(sx * 1.62, 0.3, 4.6);
     finWrap.rotation.z = sx * -0.3;
     g.add(finWrap);
     const finTipGeo = flatShape([[0.7, 2.6], [-0.9, 2.6], [-1.05, 2.05], [0.45, 2.05]], 0.17);
@@ -319,7 +423,7 @@ function buildPlane() {
   for (const sx of [-1, 1]) {
     const glow = new THREE.Sprite(glowMat);
     glow.scale.set(1.9, 1.9, 1);
-    glow.position.set(sx * 1.08, -0.28, 5.9);
+    glow.position.set(sx * 1.08, -0.28, 6.9);
     g.add(glow);
   }
   g.userData.glowMat = glowMat;
@@ -332,7 +436,7 @@ function buildPlane() {
   for (const sx of [-1, 1]) {
     const decal = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 0.82),
       new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, side: THREE.DoubleSide }));
-    decal.position.set(sx * 0.94, 0.16, -0.6);
+    decal.position.set(sx * 1.01, 0.16, -0.6);
     decal.rotation.y = sx * Math.PI / 2;
     g.add(decal);
   }
@@ -345,9 +449,9 @@ function buildPlane() {
     wheel.rotation.z = Math.PI / 2; wheel.position.set(sx * 1.5, -1.9, 0.5); legs.add(wheel);
   }
   const noseLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 1.3, 5), dark);
-  noseLeg.position.set(0, -1.15, -3.6); legs.add(noseLeg);
+  noseLeg.position.set(0, -1.15, -4.3); legs.add(noseLeg);
   const noseWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.26, 10), dark);
-  noseWheel.rotation.z = Math.PI / 2; noseWheel.position.set(0, -1.8, -3.6); legs.add(noseWheel);
+  noseWheel.rotation.z = Math.PI / 2; noseWheel.position.set(0, -1.8, -4.3); legs.add(noseWheel);
   g.add(legs);
   const prop = new THREE.Group(); // jets have no prop; kept so spin references stay harmless
   g.userData.blurDisc = { material: { opacity: 0 } };
@@ -965,6 +1069,7 @@ function animate() {
   const dt = Math.min(0.05, clock.getDelta());
   const t = clock.elapsedTime;
   sea.position.y = 0.4 + Math.sin(t * 0.5) * 0.18;
+  seaBump.offset.set(t * 0.006, t * 0.0023);
   for (const cl of clouds) { cl.position.x += dt * 2.2; if (cl.position.x > 2900) cl.position.x = -2900; }
   const active = gates[S.gateIdx];
   if (active && S.mode === 'play') {
