@@ -61,15 +61,15 @@ renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x8ec9d8);
-scene.fog = new THREE.Fog(0xb9d9de, 1600, 6800);
+scene.background = new THREE.Color(0xeac49a);
+scene.fog = new THREE.Fog(0xe3c298, 1500, 6600);
 /* gradient sky dome with a warm glow around the sun's side of the sky */
 function buildSky() {
   const geo = new THREE.SphereGeometry(9000, 24, 14);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const top = new THREE.Color(0x3f8fc4), mid = new THREE.Color(0x9fd3e0);
-  const low = new THREE.Color(0xe9e4c8), tmp = new THREE.Color();
+  const top = new THREE.Color(0x466e7d), mid = new THREE.Color(0xb3beb2);
+  const low = new THREE.Color(0xf6bf78), tmp = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i) / 9000;
     if (y > 0.12) tmp.copy(mid).lerp(top, Math.min(1, (y - 0.12) / 0.7));
@@ -88,8 +88,8 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-scene.add(new THREE.HemisphereLight(0xcfeeff, 0x3d6b46, 0.95));
-const sun = new THREE.DirectionalLight(0xfff2d8, 1.2);
+scene.add(new THREE.HemisphereLight(0xffdfb0, 0x4a6741, 0.85));
+const sun = new THREE.DirectionalLight(0xffc98a, 1.3);
 sun.position.set(-900, 1400, -600);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -135,7 +135,7 @@ scene.add(buildTerrain());
 /* sea surface (translucent, animated in the loop) */
 const sea = new THREE.Mesh(
   new THREE.PlaneGeometry(WORLD * 2.4, WORLD * 2.4),
-  new THREE.MeshPhongMaterial({ color: 0x2e86ab, specular: 0xbfe8ef, shininess: 110, transparent: true, opacity: 0.9 })
+  new THREE.MeshPhongMaterial({ color: 0x2e86ab, specular: 0x7fa8ad, shininess: 170, transparent: true, opacity: 0.9 })
 );
 sea.rotation.x = -Math.PI / 2; sea.position.y = 0.4;
 scene.add(sea);
@@ -240,19 +240,89 @@ function buildClouds() {
 }
 buildClouds();
 
-/* ---------- the Kestrel 07: low-poly prop plane, orange & cream ---------- */
+/* ---------- the Kestrel 07: twin-tail jet, white & orange (ref-2 shape) ----------
+   Built entirely from code geometry: swept extruded wings, canted twin fins,
+   two round engines with throttle-driven exhaust glow. No model files. */
+function flatShape(points, thickness) {
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
+  shape.closePath();
+  return new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
+}
 function buildPlane() {
   const g = new THREE.Group();
-  const cream = new THREE.MeshPhongMaterial({ color: 0xf3e3c2, shininess: 26, specular: 0x555044 });
+  const white = new THREE.MeshPhongMaterial({ color: 0xf2f0ea, shininess: 34, specular: 0x666055 });
   const orange = new THREE.MeshPhongMaterial({ color: 0xe86f2e, shininess: 30, specular: 0x664422 });
   const dark = new THREE.MeshLambertMaterial({ color: 0x2b3438, flatShading: true });
-  const glass = new THREE.MeshPhongMaterial({ color: 0x1d4e63, shininess: 120, specular: 0xcfe8ff });
-  const fus = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 0.55, 8.6, 18), cream);
+  const glass = new THREE.MeshPhongMaterial({ color: 0x14242e, shininess: 140, specular: 0xd8ecff });
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.78, 9.6, 18), white);
   fus.rotation.x = Math.PI / 2; g.add(fus);
-  const nose = new THREE.Mesh(new THREE.CylinderGeometry(1.12, 1.05, 1.6, 18), orange);
-  nose.rotation.x = Math.PI / 2; nose.position.z = -4.9; g.add(nose);
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(1.02, 16, 12), glass);
-  cockpit.scale.set(0.82, 0.72, 1.7); cockpit.position.set(0, 0.78, -0.7); g.add(cockpit);
+  const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.92, 2.6, 18), white);
+  nose.rotation.x = Math.PI / 2; nose.position.z = -6.05; g.add(nose);
+  const tailCone = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.5, 1.8, 14), white);
+  tailCone.rotation.x = Math.PI / 2; tailCone.position.z = 5.6; g.add(tailCone);
+  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.86, 16, 12), glass);
+  cockpit.scale.set(0.78, 0.62, 1.9); cockpit.position.set(0, 0.66, -3.3); g.add(cockpit);
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 6.4), orange);
+  spine.position.set(0, 0.88, 1.2); g.add(spine);
+  // swept wings: shape drawn with +Y as forward, extruded thin, laid flat
+  for (const sx of [-1, 1]) {
+    const wingGeo = flatShape([[0.6 * sx, 2.0], [6.9 * sx, -0.7], [6.9 * sx, -1.9], [0.6 * sx, -1.5]], 0.2);
+    const wing = new THREE.Mesh(wingGeo, white);
+    wing.rotation.x = -Math.PI / 2;
+    wing.position.set(0, -0.42, 0);
+    g.add(wing);
+    const winglet = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.0, 1.15), orange);
+    winglet.position.set(sx * 6.85, 0.05, 1.35);
+    winglet.rotation.z = sx * -0.25;
+    g.add(winglet);
+    const intake = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.62, 2.6), dark);
+    intake.position.set(sx * 1.55, -0.62, -0.4); g.add(intake);
+    const nav = new THREE.Mesh(new THREE.SphereGeometry(0.2, 6, 5),
+      new THREE.MeshBasicMaterial({ color: sx < 0 ? 0xff4444 : 0x44ff77 }));
+    nav.position.set(sx * 6.9, -0.3, 0.6); g.add(nav);
+    // rear engines with glowing exhausts
+    const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.54, 3.6, 14), dark);
+    eng.rotation.x = Math.PI / 2; eng.position.set(sx * 1.08, -0.28, 3.6); g.add(eng);
+    const exhaust = new THREE.Mesh(new THREE.CircleGeometry(0.4, 14),
+      new THREE.MeshBasicMaterial({ color: 0xd97a24 }));
+    exhaust.position.set(sx * 1.08, -0.28, 5.42); g.add(exhaust);
+    // horizontal stabilisers
+    const stabGeo = flatShape([[1.0 * sx, 0.9], [3.1 * sx, -0.5], [3.1 * sx, -1.2], [1.0 * sx, -0.7]], 0.16);
+    const stab = new THREE.Mesh(stabGeo, white);
+    stab.rotation.x = -Math.PI / 2; stab.position.set(0, 0.28, 4.4); g.add(stab);
+    // canted twin fins, orange-tipped
+    const finGeo = flatShape([[2.2, 0.1], [0.7, 2.6], [-0.9, 2.6], [-1.7, 0.1]], 0.16);
+    const fin = new THREE.Mesh(finGeo, white);
+    fin.rotation.y = Math.PI / 2;
+    const finWrap = new THREE.Group();
+    finWrap.add(fin);
+    finWrap.position.set(sx * 1.62, 0.3, 3.05);
+    finWrap.rotation.z = sx * -0.3;
+    g.add(finWrap);
+    const finTipGeo = flatShape([[0.7, 2.6], [-0.9, 2.6], [-1.05, 2.05], [0.45, 2.05]], 0.17);
+    const finTip = new THREE.Mesh(finTipGeo, orange);
+    finTip.rotation.y = Math.PI / 2;
+    finWrap.add(finTip);
+  }
+  // exhaust glow sprites, fed by throttle in the main loop
+  const glowC = document.createElement('canvas'); glowC.width = glowC.height = 128;
+  const gc = glowC.getContext('2d');
+  const grad = gc.createRadialGradient(64, 64, 4, 64, 64, 62);
+  grad.addColorStop(0, 'rgba(255,190,90,0.95)');
+  grad.addColorStop(0.4, 'rgba(255,120,40,0.55)');
+  grad.addColorStop(1, 'rgba(255,90,20,0)');
+  gc.fillStyle = grad; gc.fillRect(0, 0, 128, 128);
+  const glowTex = new THREE.CanvasTexture(glowC);
+  const glowMat = new THREE.SpriteMaterial({ map: glowTex, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false });
+  for (const sx of [-1, 1]) {
+    const glow = new THREE.Sprite(glowMat);
+    glow.scale.set(1.9, 1.9, 1);
+    glow.position.set(sx * 1.08, -0.28, 5.9);
+    g.add(glow);
+  }
+  g.userData.glowMat = glowMat;
   // painted name decals on both flanks, drawn on a canvas (no image files)
   const decalC = document.createElement('canvas'); decalC.width = 512; decalC.height = 96;
   const dc = decalC.getContext('2d');
@@ -260,48 +330,27 @@ function buildPlane() {
   dc.fillText('K E S T R E L', 256, 62);
   const decalTex = new THREE.CanvasTexture(decalC);
   for (const sx of [-1, 1]) {
-    const decal = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.86),
+    const decal = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 0.82),
       new THREE.MeshBasicMaterial({ map: decalTex, transparent: true, side: THREE.DoubleSide }));
-    decal.position.set(sx * 1.06, 0.18, 0.7);
+    decal.position.set(sx * 0.94, 0.16, -0.6);
     decal.rotation.y = sx * Math.PI / 2;
     g.add(decal);
-    const nav = new THREE.Mesh(new THREE.SphereGeometry(0.22, 6, 5),
-      new THREE.MeshBasicMaterial({ color: sx < 0 ? 0xff4444 : 0x44ff77 }));
-    nav.position.set(sx * 6.9, 0.15, -1.1); g.add(nav);
   }
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(13.6, 0.28, 2.1), orange);
-  wing.position.set(0, -0.25, -1.1); g.add(wing);
-  const wingTipL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, 1.9), dark);
-  wingTipL.position.set(-6.8, 0.15, -1.1); g.add(wingTipL);
-  const wingTipR = wingTipL.clone(); wingTipR.position.x = 6.8; g.add(wingTipR);
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.24, 1.4), orange);
-  tail.position.set(0, 0.25, 4.1); g.add(tail);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.3, 1.6), orange);
-  fin.position.set(0, 1.2, 4.15); g.add(fin);
-  const prop = new THREE.Group();
-  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.32, 4.6, 0.12), dark);
-  prop.add(blade);
-  const blade2 = blade.clone(); blade2.rotation.z = Math.PI / 2; prop.add(blade2);
-  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), dark);
-  prop.add(hub); prop.position.z = -5.85; g.add(prop);
-  const blurDisc = new THREE.Mesh(new THREE.CircleGeometry(2.35, 24),
-    new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
-  blurDisc.position.z = -5.8; g.add(blurDisc);
-  g.userData.blurDisc = blurDisc;
   g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
-  const gearMat = dark;
   const legs = new THREE.Group();
   for (const sx of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.5, 5), gearMat);
-    leg.position.set(sx * 1.7, -1.25, -1.2); legs.add(leg);
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.35, 10), gearMat);
-    wheel.rotation.z = Math.PI / 2; wheel.position.set(sx * 1.7, -2.0, -1.2); legs.add(wheel);
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 1.4, 5), dark);
+    leg.position.set(sx * 1.5, -1.2, 0.5); legs.add(leg);
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.52, 0.34, 10), dark);
+    wheel.rotation.z = Math.PI / 2; wheel.position.set(sx * 1.5, -1.9, 0.5); legs.add(wheel);
   }
-  const tailWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.24, 8), gearMat);
-  tailWheel.rotation.z = Math.PI / 2; tailWheel.position.set(0, -0.95, 4.2); legs.add(tailWheel);
+  const noseLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 1.3, 5), dark);
+  noseLeg.position.set(0, -1.15, -3.6); legs.add(noseLeg);
+  const noseWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.26, 10), dark);
+  noseWheel.rotation.z = Math.PI / 2; noseWheel.position.set(0, -1.8, -3.6); legs.add(noseWheel);
   g.add(legs);
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.16, 0.5, 5.4), orange);
-  stripe.position.set(0, 0.1, 0.6); g.add(stripe);
+  const prop = new THREE.Group(); // jets have no prop; kept so spin references stay harmless
+  g.userData.blurDisc = { material: { opacity: 0 } };
   return { group: g, prop, legs };
 }
 const plane = buildPlane();
@@ -943,10 +992,13 @@ function animate() {
     stepCamera(dt);
   }
   stepBursts(dt);
-  // keep the sun (and its shadows) centred on the action, spin blur with throttle
-  sun.position.set(S.pos.x - 700, 1150, S.pos.z - 460);
+  // keep the low golden-hour sun (and its shadows) centred on the action;
+  // the jet's exhaust glow breathes with throttle
+  sun.position.set(S.pos.x - 850, 560, S.pos.z - 420);
   sun.target.position.copy(S.pos);
-  plane.group.userData.blurDisc.material.opacity = S.throttle * 0.17;
+  if (plane.group.userData.glowMat) {
+    plane.group.userData.glowMat.opacity = 0.16 + S.throttle * 0.62 + Math.sin(t * 31) * 0.03;
+  }
   const targetFov = 58 + Math.min(8, Math.max(0, (S.speed - 30) * 0.16)) + (S.onGround && S.throttle > 0.8 ? Math.sin(t * 47) * 0.4 : 0);
   if (Math.abs(camera.fov - targetFov) > 0.05) { camera.fov += (targetFov - camera.fov) * 0.08; camera.updateProjectionMatrix(); }
   if (msgTimer > 0 && msgTimer < 900) { msgTimer -= dt; if (msgTimer <= 0) document.getElementById('msg').textContent = ''; }
