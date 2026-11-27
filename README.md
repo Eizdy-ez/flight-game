@@ -3,7 +3,7 @@
 A flight sortie game for the make.fun "Make the best flight game" bounty.
 
 Take off from the city airport runway (RWY 18) in the Kestrel 07, thread six
-glowing gates in order around the harbour city — over its rooftops, the
+glowing gates in order around the mountain islands — over forested peaks, the
 downtown towers and the bays — then bring her home and land back on the same
 strip. Your touchdown is graded: sink rate, touchdown speed and centreline
 decide the landing bonus on the debrief card.

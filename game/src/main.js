@@ -15,26 +15,48 @@ function gauss(x, z, cx, cz, r, h) {
   const d2 = dx * dx + dz * dz;
   return d2 > 9 ? 0 : h * Math.exp(-d2 * 1.6);
 }
-/* coastal city landform: one dominant landmass, the sea kept to the south
-   bays, a flat urban shelf for the city, hill backdrop to the north */
-function cityMask(x, z) {
-  const dx = (x - 150) / 1480, dz = (z + 100) / 1220;
-  const d = dx * dx + dz * dz;
-  return d >= 1 ? 0 : d <= 0.5 ? 1 : 1 - (d - 0.5) / 0.5;
+/* the archipelago: a low airport island in the centre, high mountain
+   islands flanking west and east, one backdrop peak north, islets south.
+   Each island carries a region type that drives its painted palette. */
+const ISLANDS = [
+  { x: 0, z: -260, r: 720, h: 66, t: 'lush' },      // airport island
+  { x: 60, z: 330, r: 640, h: 56, t: 'lush' },
+  { x: -1250, z: -650, r: 560, h: 305, t: 'volc' }, // west chain
+  { x: -1450, z: 250, r: 520, h: 268, t: 'lush' },
+  { x: -1050, z: 950, r: 430, h: 214, t: 'lush' },
+  { x: 1300, z: -700, r: 580, h: 318, t: 'lush' },  // east chain
+  { x: 1480, z: 300, r: 500, h: 252, t: 'dry' },
+  { x: 1100, z: 980, r: 420, h: 205, t: 'dry' },
+  { x: -150, z: -1700, r: 800, h: 345, t: 'lush' }, // north backdrop peak
+  { x: 350, z: 1400, r: 300, h: 62, t: 'dry' },     // south islets
+  { x: -700, z: 1300, r: 260, h: 48, t: 'lush' },
+];
+function mountainFactor(x, z) {
+  let m = 0;
+  for (const I of ISLANDS) if (I.h > 150) m += gauss(x, z, I.x, I.z, I.r, 1);
+  return Math.min(1, m * 1.5);
+}
+/* which region owns a point: the strongest island of each type */
+function regionAt(x, z) {
+  let best = null, bs = 0;
+  for (const I of ISLANDS) {
+    const s = gauss(x, z, I.x, I.z, I.r, 1);
+    if (s > bs) { bs = s; best = I.t; }
+  }
+  return bs > 0.12 ? best : null;
 }
 function rawHeight(x, z) {
   let h = -26;                                       // seabed
-  h += gauss(x, z, -300, -200, 2400, 122);           // the landmass itself
-  h += gauss(x, z, -700, -1500, 700, 118);           // northern hill backdrop
-  h += gauss(x, z, 900, -1350, 620, 96);
-  h += gauss(x, z, -150, -1950, 950, 128);
-  h += gauss(x, z, -1500, -500, 520, 62);            // western shoulder
-  h += gauss(x, z, 1500, 1550, 1500, -172);          // south-east bay (sea)
-  h += gauss(x, z, -1750, 1850, 1350, -158);         // south-west bay (sea)
-  h += Math.sin(x * 0.004 + z * 0.003) * 3.2 * Math.max(0, Math.min(1, (h + 10) / 40));
-  // the city shelf: pull the urban ellipse down to a near-flat coastal plain
-  const cm = cityMask(x, z);
-  if (cm > 0 && h > 0) h = h + (16 - h) * cm * 0.94;
+  for (const I of ISLANDS) h += gauss(x, z, I.x, I.z, I.r, I.h);
+  // craggy ridged detail on the high islands, so peaks read as mountains
+  const mf = mountainFactor(x, z);
+  if (mf > 0.02 && h > 2) {
+    const rn = fbm(x * 0.004 + 70, z * 0.004 + 3);
+    const ridge = 1 - Math.abs(rn * 2 - 1);
+    h += ridge * ridge * 74 * mf;
+    h += (fbm(x * 0.017 + 9, z * 0.017 + 44) - 0.5) * 26 * mf;
+  }
+  h += Math.sin(x * 0.004 + z * 0.003) * 2.6 * Math.max(0, Math.min(1, (h + 10) / 40));
   return h;
 }
 function heightAt(x, z) {
@@ -216,47 +238,52 @@ function paintTerrainTexture() {
       } else if (h < 5.5) {     // beach sand with damp patches
         const damp = nMid * 26;
         r = 226 - damp; g = 199 - damp; b = 138 - damp * 0.7;
-      } else if (h < 52) {      // grass: deep meadow green mottled with dry patches
+      } else if (h < 95) {      // grass and low forest: deep green mottled with dry patches
         const dry = Math.max(0, nBig - 0.55) * 1.6;
         r = mix(74, 158, dry) + (nMid - 0.5) * 32 + (nMicro - 0.5) * 15;
         g = mix(122, 146, dry) + (nMid - 0.5) * 28 + (nMicro - 0.5) * 13;
         b = mix(52, 76, dry) + (nFine - 0.5) * 15;
-        const forest = Math.max(0, (h - 20) / 32) * Math.max(0, nBig - 0.34) * 1.8; // dark woodland blotches
-        r = mix(r, 52, Math.min(0.8, forest)); g = mix(g, 102, Math.min(0.8, forest)); b = mix(b, 50, Math.min(0.8, forest));
-      } else if (h < 108) {     // high forest thinning into warm rock
-        const t = (h - 52) / 56;
-        r = mix(66, 138, t) + (nMid - 0.5) * 30;
-        g = mix(116, 108, t) + (nMid - 0.5) * 26;
-        b = mix(58, 82, t) + (nFine - 0.5) * 14;
-      } else {                  // peaks: banded strata, pale caps
+        const forest = Math.max(0, (h - 16) / 40) * Math.max(0, nBig - 0.32) * 1.9; // dark woodland blotches
+        r = mix(r, 50, Math.min(0.82, forest)); g = mix(g, 100, Math.min(0.82, forest)); b = mix(b, 48, Math.min(0.82, forest));
+      } else if (h < 195) {     // high forest: stays green, only warming slightly with altitude
+        const t = (h - 95) / 100;
+        r = mix(62, 104, t) + (nMid - 0.5) * 30;
+        g = mix(110, 106, t) + (nMid - 0.5) * 26;
+        b = mix(54, 72, t) + (nFine - 0.5) * 14;
+      } else {                  // bare peaks only at the very top: banded strata
         const band = 0.5 + 0.5 * Math.sin(h * 0.55 + nMid * 3);
-        r = 148 + band * 26 + (nMid - 0.5) * 26;
-        g = 128 + band * 22 + (nMid - 0.5) * 22;
-        b = 106 + band * 18 + (nFine - 0.5) * 12;
-        const cap = Math.min(1, (h - 128) / 26);
-        r = mix(r, 226, cap); g = mix(g, 222, cap); b = mix(b, 210, cap);
+        r = 142 + band * 24 + (nMid - 0.5) * 26;
+        g = 124 + band * 20 + (nMid - 0.5) * 22;
+        b = 102 + band * 16 + (nFine - 0.5) * 12;
+        const cap = Math.min(0.55, Math.max(0, (h - 225) / 40));
+        r = mix(r, 224, cap); g = mix(g, 220, cap); b = mix(b, 208, cap);
       }
-      if (h > 4 && slope > 0.32) {  // any steep face sheds its green: bare warm rock
-        const t = Math.min(0.85, (slope - 0.32) * 1.7);
+      if (h > 10 && slope > 0.52) {  // only truly steep faces shed their green
+        const t = Math.min(0.62, (slope - 0.52) * 1.5);
         r = mix(r, 140, t); g = mix(g, 112, t); b = mix(b, 84, t);
       }
       if (h > 0.4 && h < 3.4) {     // foam lace along the waterline
         const foam = Math.max(0, nFine - 0.42) * (1 - Math.abs(h - 1.6) / 1.8);
         r = mix(r, 244, Math.min(0.75, foam)); g = mix(g, 248, Math.min(0.75, foam)); b = mix(b, 244, Math.min(0.75, foam));
       }
-      // the city painted into the ground itself: grey blocks and a road grid
-      const cm = cityMask(wx, wz);
-      if (cm > 0.15 && h > 3.5) {
-        const block = hash2(Math.floor(wx / 130), Math.floor(wz / 130));
-        let ur = 126 + (nMid - 0.5) * 22 + block * 14, ug = 121 + (nMid - 0.5) * 20 + block * 10, ub = 112 + (nFine - 0.5) * 14;
-        if (nBig > 0.66) { ur = mix(ur, 96, 0.55); ug = mix(ug, 138, 0.55); ub = mix(ub, 70, 0.55); } // park pockets stay green
-        const rx = ((wx % 130) + 130) % 130, rz = ((wz % 130) + 130) % 130;
-        if (rx < 8 || rz < 8) { ur = mix(ur, 58, 0.8); ug = mix(ug, 59, 0.8); ub = mix(ub, 63, 0.8); }  // asphalt streets
-        const ax = ((wx % 65) + 65) % 65, az = ((wz % 65) + 65) % 65;
-        if (ax < 2.6 || az < 2.6) { ur = mix(ur, 84, 0.5); ug = mix(ug, 84, 0.5); ub = mix(ub, 86, 0.5); } // alleys between plots
-        ur += (nMicro - 0.5) * 13; ug += (nMicro - 0.5) * 12; ub += (nMicro - 0.5) * 10;                    // pavement grain
-        const t = Math.min(1, cm * 1.15) * 0.88;
-        r = mix(r, ur, t); g = mix(g, ug, t); b = mix(b, ub, t);
+      // painted per region: each island type owns its palette
+      const region = regionAt(wx, wz);
+      if (region === 'volc' && h > 3) {          // volcanic island: forested flanks, bare ash only at the top
+        const t = 0.34;
+        r = mix(r, r * 0.6 + 14, t); g = mix(g, g * 0.62 + 12, t); b = mix(b, b * 0.66 + 13, t);
+        if (h > 175) { const at = Math.min(0.65, (h - 175) / 90); r = mix(r, 146, at); g = mix(g, 134, at); b = mix(b, 122, at); }
+      } else if (region === 'dry' && h > 3) {    // savanna island, warm and sparse
+        r = mix(r, r * 1.14 + 26, 0.55); g = mix(g, g * 1.0 + 8, 0.55); b = mix(b, b * 0.78, 0.55);
+      } else if (region === 'lush' && h > 3) {   // deep saturated jungle green
+        r = mix(r, r * 0.82, 0.4); g = mix(g, g * 1.06 + 6, 0.4); b = mix(b, b * 0.85, 0.4);
+      }
+      // forest floor: dark humus green-brown where the canopy noise runs thick
+      if (h > 6 && h < 175 && slope < 0.5) {
+        const canopy = fbm(wx * 0.006 + 120, wz * 0.006 + 60);
+        if (canopy > 0.56) {
+          const t = Math.min(0.6, (canopy - 0.56) * 2.4);
+          r = mix(r, 52, t); g = mix(g, 84, t); b = mix(b, 40, t);
+        }
       }
       const i = (py * S + px) * 4;
       d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
@@ -424,61 +451,6 @@ function facadeTextures(seedBase, base) {
   const emissive = new THREE.CanvasTexture(e);
   return { map, emissive };
 }
-function buildCity() {
-  // three facade families so the blocks do not repeat one wallpaper
-  const variants = [facadeTextures(5150, '#9aa0a4'), facadeTextures(881, '#a89a88'), facadeTextures(2024, '#8d9aa6')];
-  const geo = new THREE.BoxGeometry(1, 1, 1);
-  geo.translate(0, 0.5, 0);
-  const COUNT = 720;
-  const palette = [new THREE.Color(0xb8bcc0), new THREE.Color(0x9fb4c4), new THREE.Color(0xd8c9ae), new THREE.Color(0x8b98a8), new THREE.Color(0xc4b49a)];
-  let seed = 24680;
-  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  const placed = [];
-  let guard = 0;
-  while (placed.length < COUNT && guard++ < 9000) {
-    const x = 150 + (rnd() * 2 - 1) * 1420, z = -100 + (rnd() * 2 - 1) * 1160;
-    if (cityMask(x, z) < 0.5) continue;
-    if (Math.abs(x - RWY.x) < 85 && z > RWY.zTop - 170 && z < RWY.zBot + 130) continue;   // runway corridor
-    if (x > 30 && x < 260 && z > -430 && z < 300) continue;                               // airport grounds
-    const downtown = Math.max(0, 1 - Math.hypot(x - 520, z + 200) / 460);
-    placed.push({
-      x, z, w: 17 + rnd() * 26, d: 17 + rnd() * 26,
-      h: 13 + rnd() * 22 + downtown * downtown * (55 + rnd() * 85),
-      rot: (rnd() - 0.5) * 0.14, v: Math.floor(rnd() * 3),
-      col: palette[Math.floor(rnd() * palette.length)], gy: heightAt(x, z) - 0.4,
-    });
-  }
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
-  const sc = new THREE.Vector3(), pv = new THREE.Vector3();
-  for (let v = 0; v < 3; v++) {
-    const mine = placed.filter((p) => p.v === v);
-    if (!mine.length) continue;
-    const mat = new THREE.MeshStandardMaterial({ map: variants[v].map, emissiveMap: variants[v].emissive, emissive: 0xffca7a, emissiveIntensity: 0.85, roughness: 0.7, metalness: 0.15 });
-    const mesh = new THREE.InstancedMesh(geo, mat, mine.length);
-    mine.forEach((p, i) => {
-      eu.set(0, p.rot, 0); q.setFromEuler(eu);
-      sc.set(p.w, p.h, p.d); pv.set(p.x, p.gy, p.z);
-      m4.compose(pv, q, sc);
-      mesh.setMatrixAt(i, m4);
-      mesh.setColorAt(i, p.col);
-    });
-    scene.add(mesh);
-  }
-  // roof caps: every block gets its own roof tone, like the reference rooftops
-  const roofGeo = new THREE.BoxGeometry(1, 1, 1);
-  const roofMat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.02 });
-  const roofs = new THREE.InstancedMesh(roofGeo, roofMat, placed.length);
-  const roofPalette = [new THREE.Color(0x6e6a63), new THREE.Color(0x8a5f43), new THREE.Color(0x4e565e), new THREE.Color(0x97928a), new THREE.Color(0x71584a)];
-  placed.forEach((p, i) => {
-    eu.set(0, p.rot, 0); q.setFromEuler(eu);
-    sc.set(p.w + 0.7, 1.1, p.d + 0.7); pv.set(p.x, p.gy + p.h, p.z);
-    m4.compose(pv, q, sc);
-    roofs.setMatrixAt(i, m4);
-    roofs.setColorAt(i, roofPalette[Math.floor(rnd() * roofPalette.length)]);
-  });
-  scene.add(roofs);
-}
-buildCity();
 /* terminal block east of the apron + two parked jets waiting at gates */
 function buildTerminal() {
   const wall = new THREE.MeshStandardMaterial({ color: 0xd9d4c8, roughness: 0.55, metalness: 0.1 });
@@ -513,23 +485,6 @@ function buildTerminal() {
 buildTerminal();
 
 /* ---------- fine detail layer: street lights, approach lights, taxiway, dome ---------- */
-function buildCityLights() {
-  const pts = [];
-  for (let gx = -1170; gx <= 1470; gx += 65) for (let gz = -1220; gz <= 1020; gz += 65) {
-    const x = gx + 150, z = gz - 100;
-    if (cityMask(x, z) < 0.55) continue;
-    const h = heightAt(x, z);
-    if (h < 4) continue;
-    if (Math.abs(x - RWY.x) < 80 && z > RWY.zTop - 160 && z < RWY.zBot + 120) continue;
-    if (x > 20 && x < 280 && z > -440 && z < 310) continue;
-    pts.push(x, h + 6.5, z);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  const mat = new THREE.PointsMaterial({ color: 0xffb46b, size: 5.5, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false });
-  scene.add(new THREE.Points(geo, mat));
-}
-buildCityLights();
 function buildAirportDetail() {
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff0bc });
   const lampGeo = new THREE.SphereGeometry(0.85, 6, 5);
@@ -554,12 +509,6 @@ function buildAirportDetail() {
   // concrete apron under the terminal and parked jets
   const apron = new THREE.Mesh(new THREE.BoxGeometry(210, 0.5, 330), new THREE.MeshLambertMaterial({ color: 0x8f9296 }));
   apron.position.set(128, RWY.h + 0.24, -60); apron.receiveShadow = true; scene.add(apron);
-  // the harbour dome: a glass hemisphere landmark east of the field
-  const domeBase = new THREE.Mesh(new THREE.CylinderGeometry(41, 43, 6, 24), new THREE.MeshStandardMaterial({ color: 0xb9bdc2, roughness: 0.6 }));
-  domeBase.position.set(430, heightAt(430, 330) + 3, 330); scene.add(domeBase);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(38, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0x9fc8d8, roughness: 0.14, metalness: 0.35, envMapIntensity: 1.3 }));
-  dome.position.set(430, heightAt(430, 330) + 6, 330); dome.castShadow = true; scene.add(dome);
 }
 buildAirportDetail();
 
@@ -601,31 +550,85 @@ function buildTrees() {
   const leafG = makeBlobGeo();
   const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2e, flatShading: true });
   const leafM = new THREE.MeshLambertMaterial({ map: makeLeafTexture(), flatShading: true });
-  const MAX = 1500;
+  const MAX = 3400;
   const trunks = new THREE.InstancedMesh(trunkG, trunkM, MAX);
   const leaves = new THREE.InstancedMesh(leafG, leafM, MAX);
   const tints = [new THREE.Color(0x9fb98a), new THREE.Color(0xffffff), new THREE.Color(0x7fae72), new THREE.Color(0xc2cf9a)];
   const m4 = new THREE.Matrix4(); let n = 0;
   let seed = 1234567;
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 16000 && n < MAX; i++) {
-    const x = (rnd() * 2 - 1) * 1650, z = (rnd() * 2 - 1) * 1650;
+  const tryTree = (x, z, slopeLim) => {
+    if (n >= MAX) return;
     const h = heightAt(x, z);
-    if (h < 6 || h > 100 || onRunway(x, z)) continue;
-    if (Math.abs(x) < 70 && z > -480 && z < 320) continue;
-    if (x > 20 && x < 290 && z > -450 && z < 320) continue;         // airport grounds
-    const cm = cityMask(x, z);
-    if (cm > 0.3 && fbm(x * 0.0016, z * 0.0016) <= 0.64) continue;  // inside the city, trees live in the park pockets
-    const s = 0.42 + rnd() * 0.5;
+    if (h < 6 || h > 190 || onRunway(x, z)) return;                 // up to the treeline
+    if (Math.abs(x) < 75 && z > -490 && z < 330) return;            // runway corridor
+    if (x > 20 && x < 295 && z > -450 && z < 320) return;           // airport grounds
+    const slope = Math.abs(heightAt(x + 22, z) - h) / 22 + Math.abs(heightAt(x, z + 22) - h) / 22;
+    if (slope > slopeLim) return;                                   // not on sheer cliff faces
+    if (regionAt(x, z) === 'dry' && rnd() > 0.4) return;            // savanna stays sparse
+    const s = 0.55 + rnd() * 0.75;
     m4.makeScale(s, s, s).setPosition(x, h + 1.7 * s, z); trunks.setMatrixAt(n, m4);
-    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 5.4 * s, z); leaves.setMatrixAt(n, m4);
+    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 5.6 * s, z); leaves.setMatrixAt(n, m4);
     leaves.setColorAt(n, tints[Math.floor(rnd() * tints.length)]);
     n++;
+  };
+  // the mountain flanks get the first and densest pass
+  for (const I of ISLANDS) {
+    if (I.h < 150) continue;
+    for (let i = 0; i < 3200 && n < MAX; i++) {
+      const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * I.r * 0.98;
+      tryTree(I.x + Math.cos(a) * rr, I.z + Math.sin(a) * rr, 2.1);
+    }
   }
+  for (let i = 0; i < 20000 && n < MAX; i++) tryTree((rnd() * 2 - 1) * 1950, (rnd() * 2 - 1) * 1950, 1.5);
   trunks.count = leaves.count = n;
   scene.add(trunks); scene.add(leaves);
 }
 buildTrees();
+
+/* boulders and rock outcrops: their own coarse rock material, scattered on
+   the steep faces and high ground where trees cannot hold */
+function buildRocks() {
+  const geo = new THREE.IcosahedronGeometry(3.4, 0);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const vx = p.getX(i), vy = p.getY(i), vz = p.getZ(i);
+    const nn = hash2(Math.round(vx * 31) + 7, Math.round(vz * 31) + Math.round(vy * 31));
+    const s = 0.62 + nn * 0.85;
+    p.setXYZ(i, vx * s, vy * s * 0.72, vz * s);
+  }
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8d8578, roughness: 1, metalness: 0, flatShading: true, envMapIntensity: 0.15 });
+  const MAX = 420;
+  const mesh = new THREE.InstancedMesh(geo, mat, MAX);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
+  const sv = new THREE.Vector3(), pv = new THREE.Vector3();
+  const shades = [new THREE.Color(0xffffff), new THREE.Color(0xcfc8ba), new THREE.Color(0x9a917f), new THREE.Color(0x7e7668)];
+  let seed = 31337;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let n = 0;
+  for (let i = 0; i < 9000 && n < MAX; i++) {
+    const x = (rnd() * 2 - 1) * 1950, z = (rnd() * 2 - 1) * 1950;
+    const h = heightAt(x, z);
+    if (h < 4 || onRunway(x, z)) continue;
+    const slope = Math.abs(heightAt(x + 12, z) - h) / 12 + Math.abs(heightAt(x, z + 12) - h) / 12;
+    if (slope < 0.85 && h < 170) continue;                           // cliffs and high ground only
+    if (Math.abs(x) < 640 && Math.abs(z) < 640 && slope < 1.2) continue; // keep the airport meadow clean
+    if (Math.abs(x) < 300 && z < -400 && h < 210) continue;          // keep the final-approach valley clean
+    if (Math.abs(x) < 80 && z > -490 && z < 330) continue;
+    const s = 0.4 + rnd() * 1.2;
+    eu.set(rnd() * 0.6, rnd() * Math.PI * 2, rnd() * 0.6); q.setFromEuler(eu);
+    sv.set(s, s, s); pv.set(x, h + 0.4, z);
+    m4.compose(pv, q, sv);
+    mesh.setMatrixAt(n, m4);
+    mesh.setColorAt(n, shades[Math.floor(rnd() * shades.length)]);
+    n++;
+  }
+  mesh.count = n;
+  mesh.castShadow = true;
+  scene.add(mesh);
+}
+buildRocks();
 
 /* soft cartoon clouds */
 const clouds = [];
@@ -889,12 +892,12 @@ scene.add(plane.group);
 
 /* ---------- gates: six glowing rings flown in order ---------- */
 const GATE_DEFS = [
-  { x: -420,  y: 115, z: 560,   ry: 2.9 },   // harbour mouth, SW coast
-  { x: -980,  y: 150, z: -160,  ry: 1.9 },   // western shoulder
-  { x: -640,  y: 175, z: -980,  ry: 1.2 },   // northern hills
-  { x: 260,   y: 155, z: -1280, ry: 0.4 },   // skyline ridge
-  { x: 990,   y: 130, z: -720,  ry: -0.5 },  // NE suburbs
-  { x: 920,   y: 110, z: 160,   ry: -1.2 },  // east city edge, then home
+  { x: 420,   y: 110, z: 560,   ry: 2.9 },   // SE shore of the airport island
+  { x: 1150,  y: 185, z: -320,  ry: 1.9 },   // east mountain pass
+  { x: 640,   y: 210, z: -1180, ry: 1.2 },   // NE high saddle
+  { x: -520,  y: 215, z: -1250, ry: 0.4 },   // below the north backdrop peak
+  { x: -1230, y: 190, z: -320,  ry: -0.5 },  // west volcanic flank
+  { x: -820,  y: 120, z: 720,   ry: -1.2 },  // SW islet hop, then home
 ];
 const GATE_R = 34;
 const gates = GATE_DEFS.map((d, i) => {
@@ -1433,7 +1436,7 @@ function updateHUD() {
     const dist = Math.round(S.pos.distanceTo(gt.grp.position));
     $('nextVal').textContent = dist + ' M';
     $('objNext').textContent = 'Fly through Gate ' + String(S.gateIdx + 1).padStart(2, '0');
-    $('objTitle').textContent = S.airborne ? 'Fly the harbour circuit' : 'Line up and take off';
+    $('objTitle').textContent = S.airborne ? 'Fly the island circuit' : 'Line up and take off';
     $('objSub').textContent = S.airborne ? 'Next checkpoint ' + dist + ' m ahead' : 'Rotate at 62 kt on RWY 18';
     $('gateTagTxt').textContent = 'GATE ' + String(S.gateIdx + 1).padStart(2, '0') + ' · ' + dist + ' M';
     $('gateTag').style.display = 'block';
@@ -1585,7 +1588,7 @@ function animate() {
     stepFlight(dt);
     // ditching: nose at sea level over open water is a crash, not a landing
     if (S.mode === 'play' && S.pos.y <= 3.1 && rawHeight(S.pos.x, S.pos.z) < 0.5 && !onRunway(S.pos.x, S.pos.z)) {
-      crash('Ditched in the harbour. The Kestrel floats — briefly.');
+      crash('Ditched in the sea. The Kestrel floats — briefly.');
     }
     // sortie completes once she has landed after all gates AND rolled to a near stop
     if (S.mode === 'play' && !S.free && !S.finished && S.touchdown && S.gateIdx >= gates.length && S.onGround && S.speed <= 20) {
