@@ -344,15 +344,43 @@ function paintTerrainTexture() {
   tex.encoding = THREE.sRGBEncoding;
   return tex;
 }
+/* a true normal map derived from the height field itself, so slopes and
+   ridges catch the low sun like real ground instead of flat colour */
+function makeTerrainNormal() {
+  const S = 384, world = WORLD * 2;
+  const hs = new Float32Array(S * S);
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+    hs[j * S + i] = heightAt(-WORLD + (i / (S - 1)) * world, -WORLD + (j / (S - 1)) * world);
+  }
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const d = img.data;
+  const cell = world / (S - 1), strength = 2.4;
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+    const iL = Math.max(0, i - 1), iR = Math.min(S - 1, i + 1), jD = Math.max(0, j - 1), jU = Math.min(S - 1, j + 1);
+    const dx = (hs[j * S + iR] - hs[j * S + iL]) / (2 * cell);
+    const dz = (hs[jU * S + i] - hs[jD * S + i]) / (2 * cell);
+    const nx = -dx * strength, nz = -dz * strength, ny = 1;
+    const il = 1 / Math.hypot(nx, ny, nz);
+    const k = (j * S + i) * 4;
+    d[k] = (nx * il * 0.5 + 0.5) * 255;
+    d[k + 1] = (nz * il * 0.5 + 0.5) * 255;
+    d[k + 2] = (ny * il * 0.5 + 0.5) * 255;
+    d[k + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(c);
+}
 function buildTerrain() {
-  const size = WORLD * 2, seg = 256;
+  const size = WORLD * 2, seg = 512;
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
   const skin = paintTerrainTexture();
-  const mat = new THREE.MeshStandardMaterial({ map: skin, bumpMap: skin, bumpScale: 0.9, roughness: 0.94, metalness: 0, envMapIntensity: 0.34 });
+  const mat = new THREE.MeshStandardMaterial({ map: skin, normalMap: makeTerrainNormal(), normalScale: new THREE.Vector2(1.35, 1.35), roughness: 0.94, metalness: 0, envMapIntensity: 0.34 });
   // a second, finely tiled detail layer multiplied over the painting — this
   // is what keeps the ground crisp at low altitude instead of washing out
   const detailTex = makeNoiseTexture(256, 158, 84, 200);
@@ -593,11 +621,53 @@ function makeLeafTexture() {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   return tex;
 }
+/* foliage as painted alpha cards: clusters of individual leaves with real
+   transparency, on two crossed planes — from the air this reads as an actual
+   tree crown with holes and edges, not a green ball */
+function makeLeafAlphaTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  let seed = 4242;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const clusters = [[128, 84], [76, 128], [180, 128], [128, 168], [58, 92], [198, 92], [104, 200], [156, 200]];
+  const leaf = (cx, cy, dark) => {
+    const a = rnd() * Math.PI * 2, r = Math.pow(rnd(), 0.6) * 34;
+    const lx = cx + Math.cos(a) * r, ly = cy + Math.sin(a) * r * 0.78;
+    const hue = 96 + rnd() * 34, li = dark ? 15 + rnd() * 10 : 24 + rnd() * 20;
+    x.save(); x.translate(lx, ly); x.rotate(rnd() * Math.PI);
+    x.fillStyle = 'hsl(' + hue + ',' + (34 + rnd() * 18) + '%,' + li + '%)';
+    x.beginPath(); x.ellipse(0, 0, 6 + rnd() * 7, 3 + rnd() * 3.4, 0, 0, Math.PI * 2); x.fill();
+    x.restore();
+  };
+  for (const [cx, cy] of clusters) for (let i = 0; i < 46; i++) leaf(cx, cy + 7, true);   // shaded underlayer
+  for (const [cx, cy] of clusters) for (let i = 0; i < 62; i++) leaf(cx, cy, false);      // lit leaves
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+function makeCrossGeo() {
+  const p1 = new THREE.PlaneGeometry(8.4, 9.2);
+  p1.translate(0, 4.6, 0);
+  const p2 = p1.clone(); p2.rotateY(Math.PI / 2);
+  const g = new THREE.BufferGeometry();
+  const pos = [], uv = [], idx = [];
+  for (const src of [p1, p2]) {
+    const base = pos.length / 3;
+    const pa = src.attributes.position, ua = src.attributes.uv;
+    for (let i = 0; i < pa.count; i++) { pos.push(pa.getX(i), pa.getY(i), pa.getZ(i)); uv.push(ua.getX(i), ua.getY(i)); }
+    const ia = src.index;
+    for (let i = 0; i < ia.count; i++) idx.push(ia.getX(i) + base);
+  }
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
 function buildTrees() {
   const trunkG = new THREE.CylinderGeometry(0.55, 0.8, 3.4, 5);
-  const leafG = makeBlobGeo();
+  const leafG = makeCrossGeo();
   const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2e, flatShading: true });
-  const leafM = new THREE.MeshLambertMaterial({ map: makeLeafTexture(), flatShading: true });
+  const leafM = new THREE.MeshLambertMaterial({ map: makeLeafAlphaTexture(), alphaTest: 0.42, side: THREE.DoubleSide });
   const MAX = 3400;
   const trunks = new THREE.InstancedMesh(trunkG, trunkM, MAX);
   const leaves = new THREE.InstancedMesh(leafG, leafM, MAX);
@@ -616,7 +686,7 @@ function buildTrees() {
     if (regionAt(x, z) === 'dry' && rnd() > 0.4) return;            // savanna stays sparse
     const s = 0.55 + rnd() * 0.75;
     m4.makeScale(s, s, s).setPosition(x, h + 1.7 * s, z); trunks.setMatrixAt(n, m4);
-    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 5.6 * s, z); leaves.setMatrixAt(n, m4);
+    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 1.1 * s, z); leaves.setMatrixAt(n, m4);
     leaves.setColorAt(n, tints[Math.floor(rnd() * tints.length)]);
     n++;
   };
@@ -818,7 +888,7 @@ function buildPlane() {
   const skinTex = new THREE.CanvasTexture(skinC);
   skinTex.wrapS = THREE.RepeatWrapping;
   skinTex.anisotropy = 8;
-  const white = new THREE.MeshStandardMaterial({ map: skinTex, roughness: 0.34, metalness: 0.08 });
+  const white = new THREE.MeshPhysicalMaterial({ map: skinTex, roughness: 0.32, metalness: 0.08, clearcoat: 0.65, clearcoatRoughness: 0.28, envMapIntensity: 1.1 });
   const orange = new THREE.MeshStandardMaterial({ color: 0x0e7c86, roughness: 0.42, metalness: 0.05 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2b3438, roughness: 0.6, metalness: 0.25 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x101c26, roughness: 0.08, metalness: 0.4 });
