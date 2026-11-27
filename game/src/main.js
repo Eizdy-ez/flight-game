@@ -18,7 +18,7 @@ function gauss(x, z, cx, cz, r, h) {
 /* coastal city landform: one dominant landmass, the sea kept to the south
    bays, a flat urban shelf for the city, hill backdrop to the north */
 function cityMask(x, z) {
-  const dx = (x - 350) / 1180, dz = (z + 150) / 980;
+  const dx = (x - 150) / 1480, dz = (z + 100) / 1220;
   const d = dx * dx + dz * dz;
   return d >= 1 ? 0 : d <= 0.5 ? 1 : 1 - (d - 0.5) / 0.5;
 }
@@ -413,11 +413,11 @@ function buildCity() {
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
   let n = 0, guard = 0;
   while (n < COUNT && guard++ < 9000) {
-    const x = 350 + (rnd() * 2 - 1) * 1150, z = -150 + (rnd() * 2 - 1) * 950;
+    const x = 150 + (rnd() * 2 - 1) * 1420, z = -100 + (rnd() * 2 - 1) * 1160;
     if (cityMask(x, z) < 0.5) continue;
     if (Math.abs(x - RWY.x) < 85 && z > RWY.zTop - 170 && z < RWY.zBot + 130) continue;   // runway corridor
     if (x > 30 && x < 260 && z > -430 && z < 300) continue;                               // airport grounds
-    const downtown = Math.max(0, 1 - Math.hypot(x - 620, z + 260) / 430);
+    const downtown = Math.max(0, 1 - Math.hypot(x - 520, z + 200) / 460);
     const w = 17 + rnd() * 26, d = 17 + rnd() * 26;
     const hgt = 13 + rnd() * 22 + downtown * downtown * (55 + rnd() * 85);
     eu.set(0, (rnd() - 0.5) * 0.14, 0); q.setFromEuler(eu);
@@ -1393,7 +1393,7 @@ function applyShotMode() {
   } else if (shot === 'approach') {
     resetSortie(false);
     S.gateIdx = 6; paintGates(6, 6);
-    S.pos.set(14, 72, 1090);
+    S.pos.set(12, 86, -1180);
     aimAt(RWY.x, 120);
     S.speed = 30; S.throttle = 0.34; S.flap = 30;
     S.onGround = false; S.airborne = true; S.gearDown = true;
