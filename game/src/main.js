@@ -147,37 +147,112 @@ function makeNoiseTexture(size, base, spread, blotch) {
   return tex;
 }
 const grainTex = makeNoiseTexture(512, 205, 70, 260);
+/* value noise for painting: deterministic hash lattice, smooth interpolation */
+function hash2(ix, iz) {
+  let n = (ix * 374761393 + iz * 668265263) | 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+}
+function vnoise(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+}
+function fbm(x, z) {
+  return vnoise(x, z) * 0.55 + vnoise(x * 2.13 + 7.3, z * 2.13 + 2.9) * 0.28 + vnoise(x * 4.7 + 3.1, z * 4.7 + 8.4) * 0.17;
+}
+/* The island's skin, painted per pixel from its own heightfield: biome by
+   height and slope, mottled by three noise octaves, foam laced along the
+   waterline, strata bands on the high rock. This one painting is what the
+   reference islands have and flat vertex colours can never give. */
+function paintTerrainTexture() {
+  const S = 1024, world = WORLD * 2;
+  // heights sampled on a coarse grid (the landforms are smooth) and bilinearly
+  // upsampled — per-pixel height calls would stall the load for no visual gain
+  const G = 256, grid = new Float32Array((G + 1) * (G + 1));
+  for (let gy = 0; gy <= G; gy++) for (let gx = 0; gx <= G; gx++) {
+    grid[gy * (G + 1) + gx] = heightAt((gx / G - 0.5) * world, (gy / G - 0.5) * world);
+  }
+  const heights = new Float32Array(S * S);
+  for (let py = 0; py < S; py++) {
+    const fy = (py / S) * G, gy = Math.min(G - 1, Math.floor(fy)), ty = fy - gy;
+    for (let px = 0; px < S; px++) {
+      const fx = (px / S) * G, gx = Math.min(G - 1, Math.floor(fx)), tx = fx - gx;
+      const a = grid[gy * (G + 1) + gx], b = grid[gy * (G + 1) + gx + 1];
+      const c2 = grid[(gy + 1) * (G + 1) + gx], d2 = grid[(gy + 1) * (G + 1) + gx + 1];
+      heights[py * S + px] = a + (b - a) * tx + (c2 - a) * ty + (a - b - c2 + d2) * tx * ty;
+    }
+  }
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S), d = img.data;
+  const mix = (a, b, t) => a + (b - a) * t;
+  for (let py = 0; py < S; py++) {
+    const wz = (py / S - 0.5) * world;
+    for (let px = 0; px < S; px++) {
+      const wx = (px / S - 0.5) * world;
+      const h = heights[py * S + px];
+      const hx = heights[py * S + Math.min(S - 1, px + 3)], hz = heights[Math.min(S - 1, py + 3) * S + px];
+      const slope = (Math.abs(hx - h) + Math.abs(hz - h)) / 18; // ~0 flat .. 1 cliff
+      const nBig = fbm(wx * 0.0016, wz * 0.0016);
+      const nMid = fbm(wx * 0.013 + 40, wz * 0.013 + 9);
+      const nFine = vnoise(wx * 0.11, wz * 0.11);
+      let r, g, b;
+      if (h < 1.2) {            // seabed: wet sand falling into blue-green depth
+        const t = Math.max(0, (h + 24) / 25);
+        r = mix(38, 196, t); g = mix(104, 178, t); b = mix(140, 128, t);
+      } else if (h < 5.5) {     // beach sand with damp patches
+        const damp = nMid * 26;
+        r = 226 - damp; g = 199 - damp; b = 138 - damp * 0.7;
+      } else if (h < 52) {      // grass: sunlit meadow mottled with dry patches
+        const dry = Math.max(0, nBig - 0.55) * 1.6;
+        r = mix(96, 168, dry) + (nMid - 0.5) * 34;
+        g = mix(148, 158, dry) + (nMid - 0.5) * 30;
+        b = mix(66, 84, dry) + (nFine - 0.5) * 16;
+        const forest = Math.max(0, (h - 20) / 32) * Math.max(0, nBig - 0.34) * 1.8; // dark woodland blotches
+        r = mix(r, 52, Math.min(0.8, forest)); g = mix(g, 102, Math.min(0.8, forest)); b = mix(b, 50, Math.min(0.8, forest));
+      } else if (h < 108) {     // high forest thinning into warm rock
+        const t = (h - 52) / 56;
+        r = mix(66, 138, t) + (nMid - 0.5) * 30;
+        g = mix(116, 108, t) + (nMid - 0.5) * 26;
+        b = mix(58, 82, t) + (nFine - 0.5) * 14;
+      } else {                  // peaks: banded strata, pale caps
+        const band = 0.5 + 0.5 * Math.sin(h * 0.55 + nMid * 3);
+        r = 148 + band * 26 + (nMid - 0.5) * 26;
+        g = 128 + band * 22 + (nMid - 0.5) * 22;
+        b = 106 + band * 18 + (nFine - 0.5) * 12;
+        const cap = Math.min(1, (h - 128) / 26);
+        r = mix(r, 226, cap); g = mix(g, 222, cap); b = mix(b, 210, cap);
+      }
+      if (h > 4 && slope > 0.32) {  // any steep face sheds its green: bare warm rock
+        const t = Math.min(0.85, (slope - 0.32) * 1.7);
+        r = mix(r, 140, t); g = mix(g, 112, t); b = mix(b, 84, t);
+      }
+      if (h > 0.4 && h < 3.4) {     // foam lace along the waterline
+        const foam = Math.max(0, nFine - 0.42) * (1 - Math.abs(h - 1.6) / 1.8);
+        r = mix(r, 244, Math.min(0.75, foam)); g = mix(g, 248, Math.min(0.75, foam)); b = mix(b, 244, Math.min(0.75, foam));
+      }
+      const i = (py * S + px) * 4;
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 8;
+  tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
 function buildTerrain() {
-  const size = WORLD * 2, seg = 200;
+  const size = WORLD * 2, seg = 256;
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
-  const colors = new Float32Array(pos.count * 3);
-  const cSand = new THREE.Color(0xe8d193), cGrass = new THREE.Color(0x69a854);
-  const cForest = new THREE.Color(0x3e7d44), cRock = new THREE.Color(0x8a7f74);
-  const cPeak = new THREE.Color(0xd9d9d2), cSea = new THREE.Color(0x2f7ea6);
-  const tmp = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    const h = heightAt(x, z);
-    pos.setY(i, h);
-    if (h < 1.5) tmp.copy(cSea).lerp(new THREE.Color(0x49a3bd), Math.max(0, (h + 26) / 27));
-    else if (h < 6) tmp.copy(cSand);
-    else if (h < 48) tmp.copy(cGrass).lerp(cForest, (h - 6) / 42);
-    else if (h < 105) tmp.copy(cForest).lerp(cRock, (h - 48) / 57);
-    else tmp.copy(cRock).lerp(cPeak, Math.min(1, (h - 105) / 60));
-    // steep faces read as bare rock whatever their height, like the reference crags
-    const slope = Math.abs(heightAt(x + 16, z) - h) + Math.abs(heightAt(x, z + 16) - h);
-    if (h > 6 && slope > 9) tmp.lerp(cRock, Math.min(0.75, (slope - 9) / 14));
-    const jitter = ((i * 7919) % 13) / 13 * 0.05 - 0.025;
-    colors[i * 3] = tmp.r + jitter; colors[i * 3 + 1] = tmp.g + jitter; colors[i * 3 + 2] = tmp.b + jitter;
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  for (let i = 0; i < pos.count; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
-  const tex = grainTex.clone();
-  tex.needsUpdate = true;
-  tex.repeat.set(30, 30);
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex });
+  const skin = paintTerrainTexture();
+  const mat = new THREE.MeshStandardMaterial({ map: skin, bumpMap: skin, bumpScale: 0.9, roughness: 0.97, metalness: 0, envMapIntensity: 0.22 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   return mesh;
@@ -185,12 +260,31 @@ function buildTerrain() {
 scene.add(buildTerrain());
 
 /* sea surface (translucent, animated in the loop) */
-const seaBump = grainTex.clone();
-seaBump.needsUpdate = true;
-seaBump.repeat.set(90, 90);
+/* water normal map derived from the same fbm field, so the swell has shape */
+function makeWaterNormal() {
+  const S = 256, hgt = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) hgt[y * S + x] = fbm(x * 0.055, y * 0.055) + 0.4 * vnoise(x * 0.21, y * 0.21);
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S), d = img.data;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const xm = (x - 1 + S) % S, xp = (x + 1) % S, ym = (y - 1 + S) % S, yp = (y + 1) % S;
+    const dx = (hgt[y * S + xp] - hgt[y * S + xm]) * 2.2;
+    const dy = (hgt[yp * S + x] - hgt[ym * S + x]) * 2.2;
+    const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+    const i = (y * S + x) * 4;
+    d[i] = (-dx * inv * 0.5 + 0.5) * 255; d[i + 1] = (-dy * inv * 0.5 + 0.5) * 255; d[i + 2] = inv * 255; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(70, 70);
+  return tex;
+}
+const seaNormal = makeWaterNormal();
 const sea = new THREE.Mesh(
   new THREE.PlaneGeometry(WORLD * 2.4, WORLD * 2.4),
-  new THREE.MeshPhongMaterial({ color: 0x2e86ab, specular: 0x5f8a90, shininess: 190, transparent: true, opacity: 0.9, bumpMap: seaBump, bumpScale: 0.7 })
+  new THREE.MeshStandardMaterial({ color: 0x1d6a8c, roughness: 0.13, metalness: 0.05, normalMap: seaNormal, normalScale: new THREE.Vector2(0.55, 0.55), envMapIntensity: 1.35, transparent: true, opacity: 0.96 })
 );
 sea.rotation.x = -Math.PI / 2; sea.position.y = 0.4;
 scene.add(sea);
@@ -264,10 +358,22 @@ function buildAirfield() {
 }
 buildAirfield();
 
-/* low-poly trees on the green slopes */
+/* trees on the green slopes: jittered-blob canopies, no two alike */
+function makeBlobGeo() {
+  const geo = new THREE.IcosahedronGeometry(4.6, 1);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const vx = p.getX(i), vy = p.getY(i), vz = p.getZ(i);
+    const n = hash2(Math.round(vx * 40) + 90, Math.round(vz * 40) + Math.round(vy * 40));
+    const s = 0.76 + n * 0.52;
+    p.setXYZ(i, vx * s, vy * s * 1.05, vz * s);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
 function buildTrees() {
   const trunkG = new THREE.CylinderGeometry(0.7, 1, 4, 5);
-  const leafG = new THREE.ConeGeometry(4.4, 13, 6);
+  const leafG = makeBlobGeo();
   const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2e, flatShading: true });
   const leafM = new THREE.MeshLambertMaterial({ color: 0x2f6e3c, flatShading: true });
   const trunks = new THREE.InstancedMesh(trunkG, trunkM, 420);
@@ -281,7 +387,7 @@ function buildTrees() {
     if (h < 8 || h > 95 || onRunway(x, z) || Math.abs(x) < 70 && z > -480 && z < 320) continue;
     const s = 0.8 + rnd() * 0.9;
     m4.makeScale(s, s, s).setPosition(x, h + 2 * s, z); trunks.setMatrixAt(n, m4);
-    m4.makeScale(s, s, s).setPosition(x, h + (4 + 6) * s, z); leaves.setMatrixAt(n, m4);
+    m4.makeRotationY(rnd() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, h + 7.6 * s, z); leaves.setMatrixAt(n, m4);
     n++;
   }
   trunks.count = leaves.count = n;
@@ -293,15 +399,26 @@ buildTrees();
 const clouds = [];
 function buildClouds() {
   // soft billboard puffs: a radial-gradient sprite reads as a painted cloud
-  const cc = document.createElement('canvas'); cc.width = 256; cc.height = 160;
+  const cc = document.createElement('canvas'); cc.width = 512; cc.height = 320;
   const cx2 = cc.getContext('2d');
-  for (const [px, py, r] of [[128, 84, 62], [76, 92, 40], [182, 92, 44], [108, 66, 38], [152, 68, 34]]) {
-    const gr = cx2.createRadialGradient(px, py, 4, px, py, r);
-    gr.addColorStop(0, 'rgba(255,255,255,0.85)');
-    gr.addColorStop(0.65, 'rgba(255,255,255,0.42)');
-    gr.addColorStop(1, 'rgba(255,255,255,0)');
+  const puffs = [[256, 168, 124], [152, 184, 80], [364, 184, 88], [216, 132, 76], [304, 136, 68], [110, 200, 52], [410, 202, 56]];
+  // shaded bellies first, warm grey where the low sun underlights the cloud
+  for (const [px, py, r] of puffs) {
+    const gr = cx2.createRadialGradient(px, py + r * 0.22, 4, px, py + r * 0.22, r);
+    gr.addColorStop(0, 'rgba(198,188,180,0.5)');
+    gr.addColorStop(0.7, 'rgba(190,182,176,0.26)');
+    gr.addColorStop(1, 'rgba(190,182,176,0)');
     cx2.fillStyle = gr;
-    cx2.fillRect(0, 0, 256, 160);
+    cx2.fillRect(0, 0, 512, 320);
+  }
+  // then the lit tops, offset toward the sun
+  for (const [px, py, r] of puffs) {
+    const gr = cx2.createRadialGradient(px, py - r * 0.3, 4, px, py - r * 0.26, r * 0.94);
+    gr.addColorStop(0, 'rgba(255,247,235,0.88)');
+    gr.addColorStop(0.65, 'rgba(255,242,226,0.44)');
+    gr.addColorStop(1, 'rgba(255,242,226,0)');
+    cx2.fillStyle = gr;
+    cx2.fillRect(0, 0, 512, 320);
   }
   const tex = new THREE.CanvasTexture(cc);
   let seed = 987654;
@@ -325,46 +442,90 @@ function flatShape(points, thickness) {
   shape.moveTo(points[0][0], points[0][1]);
   for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
   shape.closePath();
-  return new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
+  return new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.09, bevelSegments: 2, steps: 1 });
+}
+/* lofted body: superellipse cross-sections swept along the fuselage, the way
+   real airframes are shaped — each station has its own width, height and
+   centreline rise, so nose, cockpit swell and tail upsweep are one surface */
+function loftGeometry(stations, radial) {
+  const verts = [], uvs = [], idx = [];
+  const zMin = stations[0].z, zMax = stations[stations.length - 1].z;
+  for (let s = 0; s < stations.length; s++) {
+    const st = stations[s];
+    for (let j = 0; j <= radial; j++) {
+      const th = (j / radial) * Math.PI * 2;
+      const co = Math.cos(th), si = Math.sin(th);
+      const px = st.rx * Math.sign(co) * Math.pow(Math.abs(co), 0.72);
+      const py = st.ry * Math.sign(si) * Math.pow(Math.abs(si), 0.72);
+      verts.push(px, py + st.cy, st.z);
+      uvs.push(j / radial, (st.z - zMin) / (zMax - zMin));
+    }
+  }
+  for (let s = 0; s < stations.length - 1; s++) {
+    for (let j = 0; j < radial; j++) {
+      const a = s * (radial + 1) + j, b = a + radial + 1;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
 }
 function buildPlane() {
   const g = new THREE.Group();
-  // painted skin for the lathed body: faint panel lines + grime, drawn in code
-  const skinC = document.createElement('canvas'); skinC.width = 1024; skinC.height = 256;
+  // painted skin for the lofted body (u wraps the body, v runs nose to tail):
+  // panel seams, rivet rows, an orange tail band, a dark radome, exhaust grime
+  const skinC = document.createElement('canvas'); skinC.width = 2048; skinC.height = 512;
   const sk = skinC.getContext('2d');
-  sk.fillStyle = '#f2f0ea'; sk.fillRect(0, 0, 1024, 256);
+  sk.fillStyle = '#f2f0ea'; sk.fillRect(0, 0, 2048, 512);
   let seed = 31337;
   const srnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let i = 0; i < 5200; i++) {
-    const v = 226 + Math.round(srnd() * 22);
+  for (let i = 0; i < 16000; i++) {
+    const v = 224 + Math.round(srnd() * 24);
     sk.fillStyle = 'rgb(' + v + ',' + v + ',' + (v - 4) + ')';
-    sk.fillRect(srnd() * 1024, srnd() * 256, 2, 2);
+    sk.fillRect(srnd() * 2048, srnd() * 512, 2, 2);
   }
-  sk.strokeStyle = 'rgba(90,90,88,0.35)'; sk.lineWidth = 2;
-  for (let i = 0; i < 26; i++) { // longitudinal panel seams (u runs around the body)
-    const px = (i / 26) * 1024 + srnd() * 8;
-    sk.beginPath(); sk.moveTo(px, 0); sk.lineTo(px, 256); sk.stroke();
+  sk.fillStyle = '#e86f2e'; sk.fillRect(0, 46, 2048, 26);        // orange tail band (v near the tail)
+  sk.fillStyle = '#2b3438'; sk.fillRect(0, 494, 2048, 18);       // dark radome tip (v at the nose)
+  sk.strokeStyle = 'rgba(90,90,88,0.32)'; sk.lineWidth = 2;
+  for (let i = 0; i < 52; i++) { // longitudinal panel seams
+    const px = (i / 52) * 2048 + srnd() * 10;
+    sk.beginPath(); sk.moveTo(px, 0); sk.lineTo(px, 512); sk.stroke();
   }
-  sk.strokeStyle = 'rgba(90,90,88,0.22)';
-  for (const py of [42, 128, 214]) { sk.beginPath(); sk.moveTo(0, py); sk.lineTo(1024, py); sk.stroke(); }
-  sk.fillStyle = 'rgba(70,64,58,0.10)';
-  for (let i = 0; i < 26; i++) sk.fillRect(srnd() * 1024, 190 + srnd() * 60, 20 + srnd() * 60, 3); // belly grime
+  sk.strokeStyle = 'rgba(90,90,88,0.20)';
+  for (let i = 1; i < 12; i++) { // ring seams along the body
+    const py = (i / 12) * 512;
+    sk.beginPath(); sk.moveTo(0, py); sk.lineTo(2048, py); sk.stroke();
+  }
+  sk.fillStyle = 'rgba(80,80,78,0.5)';                            // rivet rows beside two seams
+  for (const px of [512, 1536]) for (let py = 6; py < 512; py += 9) { sk.fillRect(px + 5, py, 2, 2); sk.fillRect(px - 7, py, 2, 2); }
+  const grime = sk.createLinearGradient(0, 330, 0, 512);          // exhaust and belly grime toward the tail underside
+  grime.addColorStop(0, 'rgba(70,64,58,0)'); grime.addColorStop(1, 'rgba(70,64,58,0.16)');
+  sk.fillStyle = grime; sk.fillRect(0, 330, 2048, 182);
+  for (let i = 0; i < 40; i++) sk.fillRect(srnd() * 2048, 400 + srnd() * 100, 24 + srnd() * 70, 3);
   const skinTex = new THREE.CanvasTexture(skinC);
   skinTex.wrapS = THREE.RepeatWrapping;
+  skinTex.anisotropy = 8;
   const white = new THREE.MeshStandardMaterial({ map: skinTex, roughness: 0.34, metalness: 0.08 });
   const orange = new THREE.MeshStandardMaterial({ color: 0xe86f2e, roughness: 0.42, metalness: 0.05 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x2b3438, roughness: 0.6, metalness: 0.25 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x101c26, roughness: 0.08, metalness: 0.4 });
-  // one continuous lathed body: the profile curve IS the aeroplane's shape,
-  // nose tip to tail cone in a single smooth surface (no cylinder joins)
-  const profile = [
-    [0.01, -7.4], [0.2, -7.05], [0.46, -6.3], [0.72, -5.3], [0.9, -4.1],
-    [0.98, -2.2], [1.0, 0.0], [0.98, 2.0], [0.92, 3.6], [0.82, 5.0],
-    [0.64, 6.0], [0.42, 6.6], [0.01, 6.95],
-  ].map((p) => new THREE.Vector2(p[0], p[1]));
-  const fusGeo = new THREE.LatheGeometry(profile, 30);
-  fusGeo.rotateX(Math.PI / 2); // lathe axis becomes the body's long axis, nose to -Z
-  const fus = new THREE.Mesh(fusGeo, white);
+  // lofted airframe: stations from nose tip to tail cone (z, half-width,
+  // half-height, centreline rise) swept into one continuous skin
+  const stations = [
+    { z: -7.4, rx: 0.03, ry: 0.03, cy: 0.06 }, { z: -7.0, rx: 0.3, ry: 0.3, cy: 0.05 },
+    { z: -6.2, rx: 0.56, ry: 0.53, cy: 0.04 }, { z: -5.2, rx: 0.79, ry: 0.73, cy: 0.02 },
+    { z: -4.2, rx: 0.93, ry: 0.85, cy: 0.0 }, { z: -3.2, rx: 1.0, ry: 0.91, cy: 0.02 },
+    { z: -2.0, rx: 1.04, ry: 0.95, cy: 0.03 }, { z: -0.5, rx: 1.06, ry: 0.98, cy: 0.03 },
+    { z: 1.0, rx: 1.04, ry: 0.97, cy: 0.04 }, { z: 2.5, rx: 1.0, ry: 0.94, cy: 0.05 },
+    { z: 4.0, rx: 0.94, ry: 0.88, cy: 0.06 }, { z: 5.2, rx: 0.85, ry: 0.8, cy: 0.07 },
+    { z: 6.2, rx: 0.71, ry: 0.67, cy: 0.08 }, { z: 6.9, rx: 0.46, ry: 0.45, cy: 0.09 },
+    { z: 7.3, rx: 0.05, ry: 0.05, cy: 0.1 },
+  ];
+  const fus = new THREE.Mesh(loftGeometry(stations, 30), white);
   g.add(fus);
   const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.86, 20, 14), glass);
   cockpit.scale.set(0.76, 0.6, 2.0); cockpit.position.set(0, 0.62, -3.5); g.add(cockpit);
@@ -386,9 +547,17 @@ function buildPlane() {
     const nav = new THREE.Mesh(new THREE.SphereGeometry(0.2, 6, 5),
       new THREE.MeshBasicMaterial({ color: sx < 0 ? 0xff4444 : 0x44ff77 }));
     nav.position.set(sx * 6.9, -0.3, 0.6); g.add(nav);
-    // rear engines with glowing exhausts
-    const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.54, 3.6, 14), dark);
-    eng.rotation.x = Math.PI / 2; eng.position.set(sx * 1.08, -0.28, 4.6); g.add(eng);
+    // rear engines: lathed nacelles with a rounded intake lip, glowing exhausts
+    const nacProfile = [
+      [0.2, -1.95], [0.48, -1.85], [0.6, -1.5], [0.64, -0.5], [0.63, 0.6], [0.57, 1.5], [0.5, 1.95],
+    ].map((p) => new THREE.Vector2(p[0], p[1]));
+    const nacGeo = new THREE.LatheGeometry(nacProfile, 20);
+    nacGeo.rotateX(Math.PI / 2);
+    const eng = new THREE.Mesh(nacGeo, dark);
+    eng.position.set(sx * 1.08, -0.28, 4.45); g.add(eng);
+    const intakeFace = new THREE.Mesh(new THREE.CircleGeometry(0.34, 16),
+      new THREE.MeshBasicMaterial({ color: 0x0c0f11 }));
+    intakeFace.rotation.y = Math.PI; intakeFace.position.set(sx * 1.08, -0.28, 2.52); g.add(intakeFace);
     const exhaust = new THREE.Mesh(new THREE.CircleGeometry(0.33, 14),
       new THREE.MeshBasicMaterial({ color: 0xb85f1a }));
     exhaust.position.set(sx * 1.08, -0.28, 6.42); g.add(exhaust);
@@ -1069,7 +1238,7 @@ function animate() {
   const dt = Math.min(0.05, clock.getDelta());
   const t = clock.elapsedTime;
   sea.position.y = 0.4 + Math.sin(t * 0.5) * 0.18;
-  seaBump.offset.set(t * 0.006, t * 0.0023);
+  seaNormal.offset.set(t * 0.008, t * 0.0031);
   for (const cl of clouds) { cl.position.x += dt * 2.2; if (cl.position.x > 2900) cl.position.x = -2900; }
   const active = gates[S.gateIdx];
   if (active && S.mode === 'play') {
